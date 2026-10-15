@@ -134,5 +134,49 @@ class ReportTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         write_report(run.directory)
 
+    def test_scenario_report_bound_to_engine_reset(self):
+        from xt4lab.report import write_report
+        from xt4lab.scenarios import load_scenario, scenario_dict, scenario_sha256
+        with tempfile.TemporaryDirectory(dir=REPO/'runs') as tmp:
+            run = prepare_run(RESEARCH, Path(tmp)/'swapped', 'bootstrap-timer-exploration',
+                              scenario_name='zero-ports-v1')
+            s = RunSession(run, REPO/'build/qemu-system-arm', budget=1)
+            s.step(); s.close()
+            p = run.directory/'run-info.json'; info = json.loads(p.read_text())
+            # Internally consistent metadata still contradicts the actual C reset.
+            other = load_scenario('one-ports-v1', timer=True)
+            info['profile']['scenario'] = scenario_dict(other)
+            info['provenance']['scenario_sha256'] = scenario_sha256(other)
+            p.write_text(json.dumps(info))
+            with self.assertRaisesRegex(ValueError, 'engine.*scenario|scenario.*engine'):
+                write_report(run.directory)
+
+    def test_transition_counts_and_hash_keep_virtual_time(self):
+        from xt4lab.report import write_report
+        with tempfile.TemporaryDirectory(dir=REPO/'runs') as tmp:
+            run = prepare_run(RESEARCH, Path(tmp)/'transition-fixture', 'bootstrap-timer-exploration',
+                              scenario_name='zero-ports-v1')
+            s = RunSession(run, REPO/'build/qemu-system-arm', budget=1)
+            s.step(); s.close()
+            path = run.directory/'segments/000/engine-events.jsonl'
+            original = path.read_text()
+            # Report-unit fixture; actual asynchronous delivery is tested in test_scenarios.
+            event = dict(event='device-transition', device='xt4-timer-exploration-v1',
+                operation='terminal-count', success=False, virtual_ns=38, width=None, value=None,
+                scenario='zero-ports-v1', detail='unknown_timer_terminal_count')
+            path.write_text(original + json.dumps(event) + '\n')
+            write_report(run.directory)
+            data = json.loads((run.directory/'summary.json').read_text())
+            self.assertTrue('modeled_operations_by_model' in data, 'missing per-model operation counts')
+            self.assertEqual(data['modeled_operations_by_model']['xt4-timer-exploration-v1'],
+                             dict(writes=0, reads=0, transitions=1))
+            self.assertEqual((data['modeled_write_count'], data['modeled_read_count']), (0, 0))
+            self.assertFalse(data['camera_booted'])
+            event['virtual_ns'] = 39
+            path.write_text(original + json.dumps(event) + '\n')
+            write_report(run.directory)
+            changed = json.loads((run.directory/'summary.json').read_text())
+            self.assertNotEqual(data['canonical_device_events_sha256'], changed['canonical_device_events_sha256'])
+
 if __name__=='__main__':
     unittest.main()

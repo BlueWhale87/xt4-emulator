@@ -38,6 +38,7 @@ def write_report(run_dir: Path) -> Path:
     dependencies = []
     reset_states = []
     device_events = []
+    engine_scenario_seen = False
     for file in sorted((run_dir/'segments').glob('*/engine-events.jsonl')):
         relative = file.relative_to(run_dir)
         for number,line in enumerate(read_regular(run_dir,str(relative)).decode().splitlines(),1):
@@ -45,6 +46,14 @@ def write_report(run_dir: Path) -> Path:
             if record.get('event') in ('device-access', 'device-transition') and int(file.parent.name) == segment:
                 device_events.append({**record, 'evidence':str(relative)+':'+str(number)})
             if record.get('event')=='reset':
+                if decoded is not None:
+                    if (record.get('profile') != info['profile']['name'] or
+                        record.get('scenario') != decoded.scenario_id or
+                        record.get('scenario_sha256') != scenario_sha256(decoded) or
+                        record.get('execution_class') != 'synthetic_exploration'):
+                        raise ValueError('Report scenario disagrees with engine reset')
+                    if int(file.parent.name) == segment:
+                        engine_scenario_seen = True
                 reset_states.append({'evidence':str(relative)+':'+str(number),
                                      'registers':record['registers']})
             if record.get('event')=='stop':
@@ -59,12 +68,22 @@ def write_report(run_dir: Path) -> Path:
                 for key in ('device', 'detail'):
                     if key in record:
                         dependencies[-1][key] = record[key]
+    if decoded is not None and not engine_scenario_seen:
+        raise ValueError('Missing engine reset scenario for report segment')
     canonical_devices = [{k:v for k,v in event.items() if k != 'evidence'}
                          for event in device_events]
     device_digest = hashlib.sha256(json.dumps(canonical_devices, sort_keys=True,
                                       separators=(',',':')).encode()).hexdigest()
-    modeled_writes = sum(e['success'] and e['operation']=='write' for e in device_events)
-    modeled_reads = sum(e['success'] and e['operation']=='read' for e in device_events)
+    by_model = {m: dict(writes=0, reads=0, transitions=0)
+                for m in info['profile'].get('models', [])}
+    for event in device_events:
+        counts = by_model.setdefault(event['device'], dict(writes=0, reads=0, transitions=0))
+        if event['event'] == 'device-transition':
+            counts['transitions'] += 1
+        elif event['success'] and event['operation'] in ('read', 'write'):
+            counts[event['operation'] + 's'] += 1
+    modeled_writes = sum(c['writes'] for c in by_model.values())
+    modeled_reads = sum(c['reads'] for c in by_model.values())
     summary = {'schema_version':1,'camera_booted':False,
         'scenario':info['profile'].get('scenario'),
         'scenario_sha256':info['provenance'].get('scenario_sha256'),
@@ -72,6 +91,7 @@ def write_report(run_dir: Path) -> Path:
         'profile':info['profile']['name'], 'assumptions':info['profile']['assumptions'],
         'models':info['profile'].get('models', []),
         'modeled_write_count':modeled_writes,'modeled_read_count':modeled_reads,
+        'modeled_operations_by_model':by_model,
         'canonical_device_events_sha256':device_digest,
         'original_sha256':info['provenance']['original_sha256'],
         'profile_sha256':info['provenance']['profile_sha256'],
@@ -90,6 +110,9 @@ def write_report(run_dir: Path) -> Path:
         f"Profile: `{info['profile']['name']}`. This run uses the recorded diagnostic starting state. "
         'Full camera boot, menus and SD support remain unimplemented. No physical camera was accessed.','',
         '## Observed stop','']
+    if decoded is not None:
+        lines[2:2] = ['**Synthetic exploration:** explicit static inputs and, when selected, '
+            'an assumed timer clock/reset model. This does not establish authentic camera state.', '']
     if summary['interrupted_attempts']:
         lines[5:5] = ['An interrupted step has uncertain completion; the count includes only confirmed single-step completions.', '']
     for key in ['pc','physical_address','virtual_address','width','access','value','device','detail','attempted_steps','completed_steps']:
@@ -102,8 +125,13 @@ def write_report(run_dir: Path) -> Path:
         lines += ['', '## Modeled operations', '',
             '- Models: ' + ', '.join('`'+m+'`' for m in summary['models']),
             f'- Successful modeled writes: **{modeled_writes}**; reads: **{modeled_reads}**.',
-            'These are inferred logical configuration effects. Electrical behavior, reset '
-            'readback and external pin samples are not established. Rejected reads return no value.',
+            'Configuration effects are inferred; input samples and timer state follow only '
+            'the explicit scenario. Electrical behavior and real reset state are unestablished. '
+            'Rejected reads return no value. Transitions do not count as reads or writes.', '',
+            '| Model | Writes | Reads | Transitions |',
+            '| --- | ---: | ---: | ---: |',
+            *(f"| `{m}` | {c['writes']} | {c['reads']} | {c['transitions']} |"
+              for m, c in by_model.items()), '',
             'Operation/state evidence: [device-events.json](device-events.json).']
     if summary['scenario']:
         lines += ['', '## Synthetic exploration', '',
@@ -111,6 +139,11 @@ def write_report(run_dir: Path) -> Path:
             'Input words are an explicit static synthetic fixture. They do not establish '
             'physical camera levels or a normal/no-buttons boot condition. '
             'This run cannot establish compatibility or physical-camera safety.']
+        if decoded.timer is not None:
+            lines += ['Timer assumptions: **54 MHz, initially halted, immediate count loading, '
+                'count preserved on enable, one virtual nanosecond per instruction.** '
+                'Debugger pauses do not advance this timer. First terminal count stops; '
+                'zero/underflow, reload, IRQ and WFI wake behavior remain unknown.']
     lines += ['', '## Assumptions', '', *('- '+a for a in summary['assumptions']), '',
         '## Reproducibility', '', f"- Original DAT SHA256: `{summary['original_sha256']}`",
         f"- Engine SHA256: `{summary['engine_sha256']}`",

@@ -72,3 +72,7 @@ python3.13 -m xt4lab run \
 ```
 
 The full scenario and canonical scenario hash are retained in run metadata and reset evidence. Each successful synthetic sample has a distinct model identity and semantics in `device-events.json`. Configuration/reset tests prove samples are independent of configuration writes, while virtual reset clears configuration knowledge and retains the selected static fixture. No timer or input interrupt behavior is added by this profile.
+
+## Separate timer continuation
+
+The distinct `bootstrap-timer-exploration` profile now continues through the input cache and a bounded synthetic timer, completing 20,680 instructions before the next unknown controller read. Its 107 writes / 17 reads include the same 97 port writes and 16 synthetic samples. The input-only profile above still stops at its first timer write; strict diagnostics retain unknown pin reads. See [timer assumptions and observed checkpoint](timer-startup.md).

@@ -71,3 +71,5 @@ The [port configuration model guide](port-bank.md) has the latest `bootstrap-por
 
 
 For the next checkpoint, select `--profile bootstrap-input-exploration` with an explicit `--scenario zero-ports-v1` or `one-ports-v1`. The [port guide](port-bank.md#explicit-synthetic-input-exploration) describes these synthetic fixtures and the verified first timer write. Omitting the scenario fails before staging; supplying it to a diagnostic profile is rejected. This profile remains headless and cannot establish authentic boot state.
+
+For the latest observed checkpoint, use `--profile bootstrap-timer-exploration --scenario zero-ports-v1 --steps 30000` with a fresh output directory. The [timer guide](timer-startup.md) describes its explicit 54 MHz/initially-halted assumptions, 20,680-instruction result and next unknown controller read. Reports split 107 writes / 17 reads by model and retain deterministic timing. `one-ports-v1` reaches the same boundary with different declared input words.

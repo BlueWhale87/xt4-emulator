@@ -54,3 +54,9 @@ The roadmap is summarized in the [project README](../../README.md). Recovered st
 The new fixed `bootstrap-port-config-diagnostic` profile enables only `xt4-port-config-v1`. It preserves the same original bootstrap and incoming CPU assumptions, executes 97 inferred logical configuration writes, then stops at an unknown external pin read after 19,613 completed instructions. See [the port-bank guide](port-bank.md). No pin fixture, IRQ, timer, electrical behavior or camera connection is added.
 
 Reports include the selected model, successful write/read counts, `device-events.json` and a separate canonical modeled-event hash. Old schema-1 reports without a model list remain readable. The original default profile and both earlier dependency checkpoints remain available.
+
+## Synthetic input and timer exploration
+
+Two additional profiles require an explicit fixed scenario: `bootstrap-input-exploration` stops at the first timer write; `bootstrap-timer-exploration` adds a bounded timer and reaches an unknown controller read after 20,680 instructions. See [the timer guide](timer-startup.md) for a runnable command and disclosed assumptions. The three diagnostic profiles retain their original behavior.
+
+The timer profile alone uses precise icount, one instruction per virtual nanosecond, and an assumed 54 MHz initially halted counter. Its first terminal-count transition stops before zero/underflow/reload/IRQ behavior is guessed. Reports expose per-model writes, reads and transitions; only successful accesses contribute to read/write totals. Device hashes include deterministic virtual time and transitions, exclude evidence locations and select only the latest reset segment. Scenario metadata must agree with the engine reset identity. Legacy reports without scenario/model fields remain readable.

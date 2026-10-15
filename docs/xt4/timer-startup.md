@@ -1,6 +1,6 @@
 # Bounded timer startup exploration
 
-The new `bootstrap-timer-exploration` profile adds `xt4-timer-exploration-v1` to the explicit static-input scenario. Device and runner tests pass; original-firmware continuation is being verified. It remains a single-core synthetic exploration profile, not authentic clock/reset evidence or a booted camera.
+The new `bootstrap-timer-exploration` profile adds `xt4-timer-exploration-v1` to the explicit static-input scenario. Unchanged original firmware completes **20,680 instructions**, **107 modeled writes** and **17 modeled reads** under either fixed scenario, then stops on read32 `0xfffe0000` at PC `0x4f7c`. It remains a single-core synthetic exploration profile, not authentic clock/reset evidence or a booted camera.
 
 ## Model contract
 
@@ -12,11 +12,19 @@ Zero-versus-underflow hardware behavior is unknown. The model stops at the first
 
 Virtual timer callbacks can run in QEMU's vCPU thread. Their stop is deferred without synchronously disabling their own clock. Synthetic deadlines are excluded from icount idle warp while remaining normal instruction deadlines. This prevents a debugger pause from skipping directly to expiry; WFI wake/interrupt behavior remains unsupported.
 
-The source wrapper's modes0–3 select software time units, not one-shot/periodic hardware modes. No IRQ mapping is inferred from software descriptor tags, and no automatic reload or interrupt acknowledgment is implemented.
+The source wrapper's modes 0–3 select software time units, not one-shot/periodic hardware modes. No IRQ mapping is inferred from software descriptor tags, and no automatic reload or interrupt acknowledgment is implemented.
 
-## Next original-firmware checkpoint
+## Observed original-firmware checkpoint
 
-Static evidence predicts ten writes: counter540000 three times, adjacent539999 three times, counter0xffffffff three times, then run command0x00800080. One channel-7 timestamp read follows; the next distinct device access is read32 `0xfffe0000` at PC `0x4f7c`. That controller's reset/read value remains unknown. This prediction is not a hardcoded device replay.
+The independent static oracle and execution agree on ten timer writes: counter 540000 three times, adjacent 539999 three times, counter 0xffffffff three times, then run command 0x00800080. One channel-7 timestamp read follows at virtual time 20,643 ns: value `0xfffffffb`, four ticks below the programmed count after 76 ns enabled. The next distinct device access is read32 `0xfffe0000` at PC `0x4f7c`. That controller's reset/read value remains unknown. The original code chooses these accesses; the model does not replay a hardcoded sequence.
+
+| Model | Successful writes | Successful reads |
+| --- | ---: | ---: |
+| Port configuration | 97 | 0 |
+| Static synthetic inputs | 0 | 16 |
+| Bounded synthetic timer | 10 | 1 |
+
+The controller stop carries no stale port/timer label and returns no guessed value. Same-scenario repetitions and a virtual reset are checked for matching device hashes/timestamps; reports count only the latest segment while retaining earlier evidence. Tests compare staged and executed instruction bytes to the recovered original bootstrap.
 
 ```sh
 python3.13 -m xt4lab run \

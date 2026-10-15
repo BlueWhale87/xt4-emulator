@@ -1,8 +1,8 @@
 # Startup dependency investigation
 
-Status: offline analysis and original-bootstrap execution, 15 October 2026. The newest `bootstrap-port-config-diagnostic` completes **19,613 original instructions** through **97 modeled port configuration writes**, then stops at the first unknown pin sample. No camera was accessed. Menus have not booted.
+Status: offline analysis and original-bootstrap execution, 15 October 2026. The newest `bootstrap-timer-exploration` completes **20,680 original instructions** with explicit synthetic inputs and timer assumptions, then stops at read32 `0xfffe0000`. The strict port diagnostic still completes 19,613 instructions and stops at the first unknown pin sample. No camera was accessed. Menus have not booted.
 
-The original `module-entry-diagnostic` remains the eight-instruction baseline, and `bootstrap-entry-diagnostic` remains the 14,731-instruction baseline with no device model. Both bootstrap profiles map only the recovered low bootstrap and its evidenced RAM envelope; the additional context/support/storage regions below are recovered research inputs, not yet a complete runtime memory map.
+The original `module-entry-diagnostic` remains the eight-instruction baseline, and `bootstrap-entry-diagnostic` remains the 14,731-instruction baseline with no device model. All bootstrap profiles map only the recovered low bootstrap and its evidenced RAM envelope; the additional context/support/storage regions below are recovered research inputs, not yet a complete runtime memory map.
 
 ## First missing object recovered
 
@@ -55,9 +55,11 @@ python3.13 -m xt4lab run \
   --profile bootstrap-entry-diagnostic --steps 30000
 ```
 
-The [port-bank investigation](port-bank.md) now describes the first register interface and the following external-input and timer dependencies. The logical port configuration model is implemented; external input samples and timers remain unsupported. Subsequent clock/reset, flash/DMA and operating-system dependencies still need tracing. Preserve both diagnostic baselines. Do not force the context flag, skip calls, inject RTOS globals or return guessed successful hardware responses to manufacture progress.
+The [port-bank investigation](port-bank.md) now describes the first register interface and the following external-input and timer dependencies. The logical port configuration model is implemented. Separate explicit exploration profiles add static synthetic samples and a bounded timer; these do not establish physical input, reset or clock state. Subsequent clock/reset, flash/DMA and operating-system dependencies still need tracing. Preserve both diagnostic baselines. Do not force the context flag, skip calls, inject RTOS globals or return guessed successful hardware responses to manufacture progress.
 
 The new model-backed profile completes the same bootstrap setup and all 97 initial port configuration writes. On attempt 19,614 it stops at PC `0x00004f7c`, reading a 32-bit word from `0xfff41014`, with device `xt4-port-config-v1`, detail `unknown_port_input` and value null. No pin sample is invented. The [port-bank guide](port-bank.md) gives its command and modeled-event evidence.
+
+The [timer continuation](timer-startup.md) now verifies the next 10 writes and one timestamp read after all 16 synthetic input samples, for 107 writes / 17 reads total. Both fixed scenarios reach the same controller dependency at PC `0x4f7c`; that controller response, flash, interrupt and multicore behavior remain unknown.
 
 A supported runtime checkpoint still precedes framebuffer, controls and virtual SD work. Menus remain an unachieved goal.
 

@@ -2,7 +2,7 @@
 
 An experimental Fujifilm X-T4 machine for QEMU, with a bounded execution runner and reproducible dependency reports. The long-term goal is to run the original camera menus and virtual SD storage before developing an SD recipe manager.
 
-**Current result: 19,613 original bootstrap instructions execute through 97 modeled configuration writes, then stop at an unknown external pin read. Camera menus do not boot yet.** Display, controls, storage, interrupts and full platform startup remain work in progress.
+**Current result: 20,680 original bootstrap instructions execute with explicit synthetic inputs and timer assumptions, then stop at an unknown controller read. Camera menus do not boot yet.** Display, controls, storage, interrupts and full platform startup remain work in progress.
 
 The project runs entirely on the host. Its runner exposes no camera connection, USB passthrough, host networking or physical storage devices. It does not modify or install camera firmware.
 
@@ -11,6 +11,7 @@ The project runs entirely on the host. Its runner exposes no camera connection, 
 - [Build, firmware preparation and testing](docs/xt4/public-setup.md)
 - [Diagnostic runner, evidence and limitations](docs/xt4/foundation.md)
 - [Startup investigation](docs/xt4/startup.md)
+- [Latest timer exploration and how to run it](docs/xt4/timer-startup.md)
 
 Fujifilm firmware, decoded images, per-camera data and local runs are **not included**. Obtain your own official X-T4 2.12 update. The input is pinned to SHA-256 `853d273b5603d3a2b93493f0ebd6a762b0b4b6bdc70317777775ae5f8ed93bc5`; other versions are rejected. The included offline decoder writes only local files.
 
@@ -26,7 +27,7 @@ Fujifilm firmware, decoded images, per-camera data and local runs are **not incl
 | Port configuration model | 97 writes verified; next external input is unknown |
 | Full platform startup | Under investigation |
 | Explicit synthetic port inputs | Original bootstrap reaches first timer write with either declared fixture; exploration only |
-| Bounded timer exploration | Device/clock/terminal-boundary tests pass; original continuation verification pending |
+| Bounded timer exploration | 107 writes / 17 reads verified; next unknown controller at `0xfffe0000`; exploration only |
 | Original menu display and virtual controls | Not implemented |
 | Virtual SD / settings storage | Not implemented |
 | SD recipe manager | Planned after menu and storage emulation |
