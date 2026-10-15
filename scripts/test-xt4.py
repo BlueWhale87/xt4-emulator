@@ -5,6 +5,9 @@ import subprocess
 import sys
 
 repo = Path(__file__).resolve().parents[1]
+subprocess.run(['ninja', '-C', 'build', '-j', '4', 'tests/unit/test-xt4-nor-boot'],
+               cwd=repo, check=True)
+subprocess.run([str(repo / 'build/tests/unit/test-xt4-nor-boot')], cwd=repo, check=True)
 subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s',
                 'tests/xt4lab', '-v'], cwd=repo, check=True)
 subprocess.run(['ninja', '-C', 'build', '-j', '4', 'tests/qtest/xt4-test'],
