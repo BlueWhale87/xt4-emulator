@@ -3,7 +3,7 @@
   "scope": "Bounded bench readiness and isolated original-getter probe; not integrated live preview",
   "firmware_sha256": "853d273b5603d3a2b93493f0ebd6a762b0b4b6bdc70317777775ae5f8ed93bc5",
   "analysis_elf_sha256": "2de7f18409a5a4a96f5da2b3b4e76022f81040f3ba573146bb62922f31c08249",
-  "bench_source_commit": "924be63b55ad37c2d808477d5589af43ab0a63b1",
+  "bench_source_commit": "a8835f5ff819c5155ecfaa6ac053f1fb54c159aa",
   "startup_observations": {
     "flash": {
       "profile": "bootstrap-flash-exploration",
@@ -49,6 +49,28 @@
       "engine_sha256": "f4303b0e49847bb43112a86f1c7d5fa016152e4127369069d935c59445fcdeae",
       "engine_source_commit": "924be63b55ad37c2d808477d5589af43ab0a63b1",
       "stop_record_sha256": "016b6166da46e4e3b7465475c10bf62282ae88c52f9aaddc07a0335133f180fc"
+    },
+    "phy": {
+      "profile": "bootstrap-phy-exploration",
+      "stop": {
+        "reason": "unsupported_access",
+        "completed_steps": 0,
+        "attempted_steps": 0,
+        "segment": 0,
+        "engine_instruction_count": 23842,
+        "virtual_address": 4294223104,
+        "exception": 0,
+        "core": 0,
+        "width": 4,
+        "pc": 20276,
+        "physical_address": 4294223104,
+        "value": 16788012,
+        "architectural_pc": 20276,
+        "access": "write"
+      },
+      "engine_sha256": "a267cdcc7e8bdc735c093269c010ba35e3ddf0f36a2714c1f0626c9e01598739",
+      "engine_source_commit": "a8835f5ff819c5155ecfaa6ac053f1fb54c159aa",
+      "stop_record_sha256": "56e015b2ad4bcb4cee243652ad75b5e2f149f7939c168c1a6abdc4d517e9e449"
     }
   },
   "picture_getter_probe": {
@@ -115,7 +137,8 @@
     "PIC getter leaf returns selected field in a synthetic context",
     "Invalid layer rejection leaves output sentinel unchanged",
     "Caller context remains unchanged",
-    "Both startup routes stop before UI/preview"
+    "Both startup routes stop before UI/preview",
+    "Updated PHY exploration stops at unsupported DMA routing before calibration, preview or UI"
   ],
   "not_validated": [
     "Normal caller/task/ABI",
@@ -124,5 +147,7 @@
     "Graphics context and state restoration",
     "Image-to-display transforms",
     "Integrated inference/overlay or real X-T4 performance"
-  ]
+  ],
+  "initial_bench_source_commit": "924be63b55ad37c2d808477d5589af43ab0a63b1",
+  "upstream_emulator_commit": "5d16d9c"
 }

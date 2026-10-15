@@ -2,26 +2,28 @@
 
 The native detector is now included under [contrib/xt4-native-detection](../../contrib/xt4-native-detection/README.md). Its host tests and standalone ARM diagnostic can run independently of camera startup. **The pinned camera bench does not reach preview or menu rendering yet, so live firmware bindings remain unavailable.**
 
-This checkpoint uses emulator commit `924be63b55ad37c2d808477d5589af43ab0a63b1`, official X-T4 firmware 2.12 SHA256 `853d273b5603d3a2b93493f0ebd6a762b0b4b6bdc70317777775ae5f8ed93bc5`, and the existing declared startup assumptions. [Machine-readable evidence](preview-overlay-readiness.json) contains stop records, identities and private-trace digests without vendor bytes or local source paths. The main checkout is under active development; these results describe this pin, not future PHY models.
+The initial flash/module/getter checkpoint uses emulator commit `924be63b55ad37c2d808477d5589af43ab0a63b1`; the latest PHY continuation follows upstream commit `5d16d9c`. Both use official X-T4 firmware 2.12 SHA256 `853d273b5603d3a2b93493f0ebd6a762b0b4b6bdc70317777775ae5f8ed93bc5`, and the existing declared startup assumptions. [Machine-readable evidence](preview-overlay-readiness.json) contains stop records, identities and private-trace digests without vendor bytes or local source paths. The main checkout is under active development; each observation retains its own engine identity and does not predict future DMA models.
 
 ## What ran
 
 | Check | Observation | Meaning |
 | --- | --- | --- |
+| PHY exploration, explicit zero-port fixture | 23,842 raw engine-counted instructions; PC `0x4f34`, unsupported write `0x01002a2c` to `0xfff4a500` | PHY reset/lock modeled; DMA routing and calibration remain unresolved |
 | Flash exploration, explicit zero-port fixture | 23,565 raw engine-counted instructions; PC `0x4f34`, unsupported write `0xc10000c9` to `0xfffd8000` | Flash PHY setup remains a startup dependency |
 | Post-loader module diagnostic | Eight completed single steps; ninth attempts byte read at `0x00e20008`, PC `0x01291024` | Synthetic module entry also stops before UI startup |
 | Isolated PIC getter `0x122c6a0` | Four cases execute the original 44 bytes / 11 ARM instructions each | Leaf accessor behavior corroborated with a synthetic caller |
 | Native graph / worker / host overlay | Independent contract tests pass | These tests do not validate camera preview hooks |
 
-Reproduce the two startup boundaries with your own prepared firmware and a new output directory, following [public setup](public-setup.md):
+Reproduce the startup boundaries with your own prepared firmware and a new output directory, following [public setup](public-setup.md):
 
 ```sh
+python3.13 -m xt4lab run --research-root ../../research/2026-10-14-xt4-firmware --out runs/preview-phy --profile bootstrap-phy-exploration --scenario zero-ports-v1 --steps 100000 --fast
 python3.13 -m xt4lab run --research-root ../../research/2026-10-14-xt4-firmware --out runs/preview-flash --profile bootstrap-flash-exploration --scenario zero-ports-v1 --steps 100000 --fast
 python3.13 -m xt4lab run --research-root ../../research/2026-10-14-xt4-firmware --out runs/preview-module --profile module-entry-diagnostic --steps 1000
 python3 scripts/test-xt4-native.py
 ```
 
-Flash exploration retains its synthetic input/timer/part/reset/timing assumptions. No original routine was skipped or replaced with a successful device response to reach an overlay.
+Flash exploration retains its synthetic input/timer/part/reset/timing assumptions. PHY exploration additionally declares the readiness/lock timing described in [the PHY checkpoint](phy-startup.md); lock is not proof of successful calibration or a data transfer. No original routine was skipped or replaced with a successful device response to reach an overlay.
 
 ## PIC getter: limited runtime corroboration
 

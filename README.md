@@ -36,7 +36,6 @@ Fujifilm firmware, decoded images, per-camera data and local runs are **not incl
 | Bounded timer exploration | 107 writes / 17 reads verified; next unknown controller at `0xfffe0000`; exploration only |
 | Transfer enable and clock-apply exploration | 127 writes / 35 reads / 2 transitions; next unknown flash write at `0xfffd8000` |
 | Causal flash command exploration | 195 writes / 125 reads / 7 transitions; next unsupported PHY-enable configuration; no array/DMA/PHY training |
-| Native face detector / host overlay contracts | Standalone component imported; camera bindings disabled |
 | Causal PHY lock exploration | 204 writes / 128 reads / 9 transitions; next unsupported DMA request-routing write; calibration/transfer incomplete |
 | Original menu display and virtual controls | Not implemented |
 | Virtual SD / settings storage | Not implemented |
