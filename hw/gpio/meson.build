@@ -1,3 +1,4 @@
+system_ss.add(when: 'CONFIG_FUJIFILM_XT4_PORTS', if_true: files('xt4-ports.c'))
 system_ss.add(when: 'CONFIG_GPIO_KEY', if_true: files('gpio_key.c'))
 system_ss.add(when: 'CONFIG_GPIO_MPC8XXX', if_true: files('mpc8xxx.c'))
 system_ss.add(when: 'CONFIG_GPIO_PWR', if_true: files('gpio_pwr.c'))

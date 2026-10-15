@@ -1,4 +1,5 @@
 import hashlib
+from dataclasses import replace
 import importlib.util
 from pathlib import Path
 import shutil
@@ -64,6 +65,30 @@ class StartupTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify_prepared(run)
 
+
+    def test_port_profile_models(self):
+        with tempfile.TemporaryDirectory(dir=REPO / 'runs') as tmp:
+            source = Path(tmp) / 'source'
+            source.mkdir()
+            shutil.copyfile(RESEARCH / 'FWUP0024.DAT', source / 'FWUP0024.DAT')
+            run = prepare_run(source, Path(tmp) / 'ports', 'bootstrap-port-config-diagnostic')
+            self.assertEqual(run.profile.models, ('xt4-port-config-v1',))
+            self.assertEqual(run.profile.entry, 0)
+            self.assertEqual(len(run.profile.regions), 1)
+            self.assertEqual(run.profile.regions[0].file_size, 0xc880)
+            verify_prepared(run)
+
+    def test_model_set_is_fixed(self):
+        from xt4lab.firmware import load_profile, validate_profile
+        old = load_profile('bootstrap-entry-diagnostic')
+        self.assertTrue(hasattr(old, 'models'), 'explicit profile model list missing')
+        self.assertEqual(old.models, ())
+        with self.assertRaises(ValueError):
+            validate_profile(replace(old, models=('xt4-port-config-v1',)))
+        new = load_profile('bootstrap-port-config-diagnostic')
+        for models in [(), ('unknown-model',), ('xt4-port-config-v1', 'xt4-port-config-v1')]:
+            with self.subTest(models=models), self.assertRaises(ValueError):
+                validate_profile(replace(new, models=models))
 
 if __name__ == '__main__':
     unittest.main()

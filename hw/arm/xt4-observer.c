@@ -29,6 +29,8 @@ static void xt4_transaction_failed(CPUState *cs, hwaddr physical, vaddr virtual,
         .has_value = access == MMU_DATA_STORE && s->pending_write &&
                      s->pending_address == physical,
         .value = s->pending_value,
+        .device = s->pending_address == physical ? s->pending_device : NULL,
+        .detail = s->pending_address == physical ? s->pending_detail : NULL,
     };
     xt4_record_stop(s, cs, &stop);
     /* A machine stop must also work without an initialized GDB server. */

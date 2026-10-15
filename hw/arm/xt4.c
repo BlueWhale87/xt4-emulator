@@ -10,6 +10,7 @@
 #include "qobject/qdict.h"
 #include "qobject/qlist.h"
 #include "qobject/qjson.h"
+#include "qobject/qstring.h"
 #include "system/reset.h"
 #include "system/address-spaces.h"
 #include "system/block-backend-global-state.h"
@@ -28,6 +29,7 @@ struct XT4ProfileDefinition {
     uint32_t entry, sp;
     const XT4RegionDefinition *regions;
     size_t region_count;
+    bool port_config;
 };
 
 static const XT4RegionDefinition module_regions[] = {
@@ -49,9 +51,11 @@ static const XT4RegionDefinition bootstrap_regions[] = {
 
 static const XT4ProfileDefinition profiles[] = {
     { "module-entry-diagnostic", 0x012910c4, 0x80000000,
-      module_regions, G_N_ELEMENTS(module_regions) },
+      module_regions, G_N_ELEMENTS(module_regions), false },
     { "bootstrap-entry-diagnostic", 0, 0,
-      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions) },
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), false },
+    { "bootstrap-port-config-diagnostic", 0, 0,
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true },
 };
 
 static G_NORETURN void invalid(const char *message)
@@ -108,6 +112,10 @@ void xt4_record_stop(XT4State *s, CPUState *cs, const XT4Stop *stop)
     qdict_put_int(event, "architectural_pc", ARM_CPU(cs)->env.regs[15]);
     qdict_put_int(event, "pc", stop->has_origin_pc ? stop->origin_pc : ARM_CPU(cs)->env.regs[15]);
     qdict_put_str(event, "access", stop->access);
+    if (stop->device) {
+        qdict_put_str(event, "device", stop->device);
+        qdict_put_str(event, "detail", stop->detail);
+    }
     if (stop->has_virtual) {
         qdict_put_int(event, "virtual_address", stop->virtual_address);
     } else {
@@ -132,10 +140,44 @@ void xt4_record_stop(XT4State *s, CPUState *cs, const XT4Stop *stop)
     emit(s, event);
 }
 
+static void port_event(void *opaque, const XT4PortEvent *access)
+{
+    XT4State *s = opaque;
+    s->pending_write = !access->success && access->write;
+    s->pending_value = access->value;
+    s->pending_address = access->address;
+    s->pending_width = access->width;
+    s->pending_device = access->success ? NULL : XT4_PORT_CONFIG_MODEL;
+    s->pending_detail = access->detail;
+    QDict *event = qdict_new();
+    qdict_put_str(event, "event", "device-access");
+    qdict_put_str(event, "device", XT4_PORT_CONFIG_MODEL);
+    qdict_put_str(event, "semantics", "inferred logical configuration; not electrical state");
+    qdict_put_str(event, "operation", access->write ? "write" : "read");
+    qdict_put_int(event, "address", access->address);
+    qdict_put_int(event, "width", access->width);
+    qdict_put_bool(event, "global", access->global);
+    qdict_put_int(event, "port", access->port);
+    qdict_put_int(event, "selector", access->selector);
+    qdict_put_bool(event, "success", access->success);
+    if (access->write || access->success) {
+        qdict_put_int(event, "value", access->value);
+    } else {
+        qdict_put_null(event, "value");
+    }
+    qdict_put_int(event, "state", access->state);
+    qdict_put_int(event, "known_mask", access->known_mask);
+    if (access->detail) {
+        qdict_put_str(event, "detail", access->detail);
+    }
+    emit(s, event);
+}
+
 static MemTxResult unknown_read(void *opaque, hwaddr addr, uint64_t *value,
                                 unsigned size, MemTxAttrs attrs)
 {
     XT4State *s = opaque;
+    s->pending_device = s->pending_detail = NULL;
     s->pending_write = false;
     *value = 0; /* Required out parameter; MEMTX_ERROR prevents guest success. */
     return MEMTX_ERROR;
@@ -145,6 +187,7 @@ static MemTxResult unknown_write(void *opaque, hwaddr addr, uint64_t value,
                                  unsigned size, MemTxAttrs attrs)
 {
     XT4State *s = opaque;
+    s->pending_device = s->pending_detail = NULL;
     s->pending_write = true;
     s->pending_value = value;
     s->pending_address = addr;
@@ -168,6 +211,9 @@ static void reset(void *opaque)
     ARMCPU *cpu = ARM_CPU(s->cpu);
     CPUARMState *env = &cpu->env;
     cpu_reset(CPU(cpu));
+    if (s->ports) {
+        device_cold_reset(DEVICE(s->ports));
+    }
     for (int i = 0; i < s->profile->region_count; i++) {
         const XT4RegionDefinition *r = &s->profile->regions[i];
         uint8_t *ram = memory_region_get_ram_ptr(&s->ram[i]);
@@ -187,6 +233,7 @@ static void reset(void *opaque)
     arm_rebuild_hflags(env);
     s->stopped = false;
     s->pending_write = false;
+    s->pending_device = s->pending_detail = NULL;
     QDict *event = qdict_new();
     qdict_put_str(event, "event", "reset");
     qdict_put_bool(event, "camera_booted", false);
@@ -229,6 +276,20 @@ static const XT4ProfileDefinition *validate_profile(int dir)
         g_strcmp0(qdict_get_try_str(p, "cpu_type"), TYPE_XT4_CPU) ||
         qdict_get_try_int(p, "entry", -1) != profile->entry) {
         invalid("unsupported or invalid profile");
+    }
+    QObject *models_obj = qdict_get(p, "models");
+    QList *models = qobject_to(QList, models_obj);
+    if ((models_obj && !models) ||
+        (profile->port_config ? !models || qlist_size(models) != 1 :
+                               models && qlist_size(models) != 0)) {
+        invalid("unsupported device model set");
+    }
+    if (profile->port_config) {
+        const QListEntry *model_entry = qlist_first(models);
+        QString *name = qobject_to(QString, qlist_entry_obj(model_entry));
+        if (!name || strcmp(qstring_get_str(name), XT4_PORT_CONFIG_MODEL)) {
+            invalid("unsupported device model identity");
+        }
     }
     QList *regions = qobject_to(QList, qdict_get(p, "regions"));
     QDict *regs = qobject_to(QDict, qdict_get(p, "registers"));
@@ -319,6 +380,13 @@ static void init(MachineState *machine)
         memory_region_init_ram_flags_nomigrate(&s->ram[i], OBJECT(machine),
                                def->name, def->size, 0, &error_fatal);
         memory_region_add_subregion(get_system_memory(), def->base, &s->ram[i]);
+    }
+    if (s->profile->port_config) {
+        s->ports = XT4_PORT_CONFIG(qdev_new(TYPE_XT4_PORT_CONFIG));
+        xt4_ports_set_event_callback(s->ports, port_event, s);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(s->ports), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(s->ports), 0, 0xfff41000);
+        sysbus_mmio_map(SYS_BUS_DEVICE(s->ports), 1, 0xfff41500);
     }
     s->cpu = XT4_CPU(object_new(TYPE_XT4_CPU));
     s->cpu->board = s;

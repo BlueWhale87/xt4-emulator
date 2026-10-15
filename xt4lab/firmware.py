@@ -33,6 +33,7 @@ class BootProfile:
     registers: dict[str, int]
     regions: tuple[Region, ...]
     assumptions: tuple[str, ...]
+    models: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -46,19 +47,25 @@ def load_profile(name: str) -> BootProfile:
     if name == 'validation':
         raise ValueError('missing_boot_state: loader-created CPU state is not recovered')
     profiles = {'module-entry-diagnostic': 'xt4-212.json',
-                'bootstrap-entry-diagnostic': 'xt4-212-bootstrap.json'}
+                'bootstrap-entry-diagnostic': 'xt4-212-bootstrap.json',
+                'bootstrap-port-config-diagnostic': 'xt4-212-ports.json'}
     if name not in profiles:
         raise ValueError('Unsupported profile')
     data = json.loads(Path(__file__).with_name('profiles').joinpath(profiles[name]).read_text())
     data.pop('schema_version')
     data['regions'] = tuple(Region(**r) for r in data['regions'])
     data['assumptions'] = tuple(data['assumptions'])
+    data['models'] = tuple(data.get('models', ()))
     profile = BootProfile(**data)
     validate_profile(profile)
     return profile
 
 
 def validate_profile(profile: BootProfile) -> None:
+    expected_models = {'module-entry-diagnostic': (), 'bootstrap-entry-diagnostic': (),
+                       'bootstrap-port-config-diagnostic': ('xt4-port-config-v1',)}
+    if profile.name not in expected_models or profile.models != expected_models[profile.name]:
+        raise ValueError('Unsupported profile model set')
     extents = []
     names = set()
     for r in sorted(profile.regions, key=lambda x: x.base):

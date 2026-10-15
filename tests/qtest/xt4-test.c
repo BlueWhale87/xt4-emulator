@@ -188,6 +188,225 @@ static void mmu_fault(void) { fault_test(4); }
 static void arm_svc(void) { fault_test(5); }
 static void thumb_svc(void) { fault_test(6); }
 
+
+static QDict *port_record(const char *run)
+{
+    g_autofree char *path = g_build_filename(run, "engine-events.jsonl", NULL);
+    g_autofree char *text = NULL;
+    g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
+    g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+    QDict *last = NULL;
+    for (int i = 0; lines[i] && *lines[i]; i++) {
+        QDict *event = qobject_to(QDict, qobject_from_json(lines[i], NULL));
+        if (!g_strcmp0(qdict_get_try_str(event, "event"), "device-access")) {
+            if (last) {
+                qobject_unref(last);
+            }
+            last = event;
+        } else {
+            qobject_unref(event);
+        }
+    }
+    g_assert_nonnull(last);
+    return last;
+}
+
+static void port_state(const char *run, bool success, uint32_t state,
+                       uint32_t known)
+{
+    QDict *event = port_record(run);
+    g_assert_cmpstr(qdict_get_str(event, "device"), ==, "xt4-port-config-v1");
+    g_assert_cmpint(qdict_get_bool(event, "success"), ==, success);
+    g_assert_cmphex(qdict_get_int(event, "state"), ==, state);
+    g_assert_cmphex(qdict_get_int(event, "known_mask"), ==, known);
+    qobject_unref(event);
+}
+
+static void port_masked_updates(void)
+{
+    g_autofree char *run = new_fixture_profile("bootstrap-port-config-diagnostic");
+    QTestState *q = start(run, false);
+    for (int selector = 0; selector < 3; selector++) {
+        uint32_t address = 0xfff41000 + selector * 4;
+        qtest_writel(q, address, 0xffff9000);
+        qtest_writel(q, address, 0x00010001);
+        port_state(run, true, 0x9001, 0xffff);
+        qtest_writel(q, address, 0x10000000);
+        port_state(run, true, 0x8001, 0xffff);
+        qtest_readl(q, address);
+        port_state(run, false, 0x8001, 0xffff);
+    }
+    qtest_writel(q, 0xfff413c0, 0x00010001); /* port15 */
+    port_state(run, true, 1, 1);
+    qtest_writel(q, 0xfff41500, 0x00020002); /* separate global */
+    port_state(run, true, 2, 2);
+    qtest_readl(q, 0xfff41500);
+    port_state(run, false, 2, 2);
+    qtest_writel(q, 0xfff41000, 0); /* no-op, prior port0 state */
+    port_state(run, true, 0x8001, 0xffff);
+    qtest_quit(q);
+}
+
+static void port_two_bit_masks(void)
+{
+    g_autofree char *run = new_fixture_profile("bootstrap-port-config-diagnostic");
+    QTestState *q = start(run, false);
+    for (int selector = 3; selector <= 4; selector++) {
+        uint32_t address = 0xfff41000 + selector * 4;
+        qtest_writel(q, address, 0x00030002);
+        port_state(run, true, 2, 3);
+        qtest_writel(q, address, 0x000c0004);
+        port_state(run, true, 6, 15);
+        qtest_writel(q, address, 0x00010001); /* unsupported half field */
+        port_state(run, false, 6, 15);
+        qtest_writel(q, address, 0xffff1555);
+        port_state(run, true, 0x1555, 0xffff);
+    }
+    qtest_quit(q);
+}
+
+static void port_full_word_rmw(void)
+{
+    g_autofree char *run = new_fixture_profile("bootstrap-port-config-diagnostic");
+    QTestState *q = start(run, false);
+    for (int selector = 6; selector <= 7; selector++) {
+        uint32_t address = 0xfff41000 + selector * 4;
+        qtest_writel(q, address, 0xc0ff3f0f);
+        g_assert_cmphex(qtest_readl(q, address), ==, 0xc0ff3f0f);
+        qtest_writel(q, address, 0xc0ff3f4f); /* replace bits6..7 only */
+        g_assert_cmphex(qtest_readl(q, address), ==, 0xc0ff3f4f);
+        port_state(run, true, 0xc0ff3f4f, 0xffffffff);
+    }
+    qtest_writel(q, 0xfff4109c, 0x00015555);
+    g_assert_cmphex(qtest_readl(q, 0xfff4109c), ==, 0x00015555);
+    qtest_readl(q, 0xfff410dc); /* selector7, different port, unknown */
+    port_state(run, false, 0, 0);
+    qtest_quit(q);
+}
+
+static void port_reset(void)
+{
+    g_autofree char *run = new_fixture_profile("bootstrap-port-config-diagnostic");
+    QTestState *q = start(run, false);
+    qtest_writel(q, 0xfff41018, 0x12345678);
+    qtest_system_reset(q);
+    qtest_readl(q, 0xfff41018);
+    port_state(run, false, 0, 0);
+    qtest_writel(q, 0xfff41000, 0x00010001);
+    port_state(run, true, 1, 1);
+    qtest_readl(q, 0xfff41000);
+    port_state(run, false, 1, 1);
+    qtest_quit(q);
+}
+
+static uint32_t mov_half(int reg, uint16_t value, bool upper)
+{
+    return (upper ? 0xe3400000 : 0xe3000000) |
+           ((value & 0xf000) << 4) | (reg << 12) | (value & 0xfff);
+}
+
+static void port_fault(uint32_t address, uint32_t op, bool write,
+                       unsigned width, uint64_t value, const char *detail,
+                       bool preinitialize)
+{
+    g_autofree char *run = new_fixture_profile("bootstrap-port-config-diagnostic");
+    QTestState *q = start(run, true);
+    if (preinitialize) {
+        qtest_writel(q, address, 0xffff0000);
+    }
+    if (!detail) {
+        qtest_readl(q, 0xfff41014); /* catch-all must clear this stale detail */
+    }
+    uint32_t code[] = {
+        mov_half(0, address, false), mov_half(0, address >> 16, true),
+        mov_half(1, 1, false), mov_half(1, 1, true),
+        mov_half(2, 0x7788, false), mov_half(2, 0x5566, true),
+        mov_half(3, 0x3344, false), mov_half(3, 0x1122, true),
+        mov_half(4, 0xa000, false), mov_half(4, 1, true),
+        op, 0xe5841000, 0xeafffffe,
+    };
+    for (int i = 0; i < G_N_ELEMENTS(code); i++) {
+        qtest_writel(q, i * 4, code[i]);
+    }
+    qtest_writel(q, 0x1a000, 0);
+    qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+    qtest_qmp_eventwait(q, "STOP");
+    QDict *stop = stop_record(run);
+    if (address & 3) {
+        /* Device-memory alignment traps before the MMIO callback. */
+        g_assert_cmpstr(qdict_get_str(stop, "reason"), ==, "unexpected_exception");
+        g_assert_cmphex(qdict_get_int(stop, "pc"), ==, 40);
+        g_assert_cmphex(qdict_get_int(stop, "virtual_address"), ==, address);
+        g_assert_cmpint(qobject_type(qdict_get(stop, "width")), ==, QTYPE_QNULL);
+        g_assert_cmpint(qobject_type(qdict_get(stop, "value")), ==, QTYPE_QNULL);
+    } else {
+        g_assert_cmpstr(qdict_get_str(stop, "reason"), ==, "unsupported_access");
+        g_assert_cmphex(qdict_get_int(stop, "pc"), ==, 40);
+        g_assert_cmphex(qdict_get_int(stop, "physical_address"), ==, address);
+        g_assert_cmpuint(qdict_get_int(stop, "width"), ==, width);
+        g_assert_cmpstr(qdict_get_str(stop, "access"), ==, write ? "write" : "read");
+        if (write) {
+            g_assert_cmphex(qdict_get_int(stop, "value"), ==, value);
+        } else {
+            g_assert_cmpint(qobject_type(qdict_get(stop, "value")), ==, QTYPE_QNULL);
+        }
+        if (detail) {
+            g_assert_cmpstr(qdict_get_str(stop, "device"), ==, "xt4-port-config-v1");
+            g_assert_cmpstr(qdict_get_str(stop, "detail"), ==, detail);
+        } else {
+            g_assert_false(qdict_haskey(stop, "device"));
+        }
+    }
+    g_assert_cmpuint(qtest_readl(q, 0x1a000), ==, 0);
+    qobject_unref(stop);
+    qtest_quit(q);
+}
+
+static void port_unknown_reads(void)
+{
+    port_fault(0xfff41014, 0xe5901000, false, 4, 0, "unknown_port_input", false);
+    for (int s = 0; s < 8; s++) {
+        if (s == 5) {
+            continue;
+        }
+        port_fault(0xfff41000 + s * 4, 0xe5901000, false, 4, 0,
+                   "unknown_port_readback", s < 5);
+    }
+    port_fault(0xfff41500, 0xe5901000, false, 4, 0, "unknown_port_readback", true);
+}
+
+static void port_invalid_operations(void)
+{
+    port_fault(0xfff41000, 0xe5c01000, true, 1, 1, "unsupported_port_access", false);
+    port_fault(0xfff41000, 0xe1c010b0, true, 2, 1, "unsupported_port_access", false);
+    port_fault(0xfff41000, 0xe1c020f0, true, 8, 0x1122334455667788ULL, "unsupported_port_access", false);
+    port_fault(0xfff41001, 0xe5801000, true, 4, 0x10001, "unsupported_port_access", false);
+    port_fault(0xfff41020, 0xe5801000, true, 4, 0x10001, "unsupported_port_access", false);
+    port_fault(0xfff41014, 0xe5801000, true, 4, 0x10001, "unsupported_port_write", false);
+    port_fault(0xfff4100c, 0xe5801000, true, 4, 0x10001, "unsupported_port_mask", false);
+    port_fault(0xfff41400, 0xe5801000, true, 4, 0x10001, NULL, false);
+    g_autofree char *run = new_fixture_profile("bootstrap-port-config-diagnostic");
+    QTestState *q = start(run, false);
+    qtest_writel(q, 0xfff41001, 0x00010001);
+    port_state(run, false, 0, 0);
+    qtest_writeq(q, 0xfff41018, 0x1122334455667788ULL);
+    QDict *event = port_record(run);
+    g_assert_false(qdict_get_bool(event, "success"));
+    g_assert_cmpuint(qdict_get_int(event, "width"), ==, 8);
+    g_assert_cmpint(qdict_get_int(event, "known_mask"), ==, 0);
+    qobject_unref(event);
+    qtest_readl(q, 0xfff41018);
+    port_state(run, false, 0, 0);
+    qtest_writeq(q, 0xfff41500, 0x1122334455667788ULL);
+    event = port_record(run);
+    g_assert_false(qdict_get_bool(event, "success"));
+    g_assert_cmpuint(qdict_get_int(event, "width"), ==, 8);
+    qobject_unref(event);
+    qtest_writel(q, 0xfff41500, 0);
+    port_state(run, true, 0, 0); /* wide write must not define any low bits */
+    qtest_quit(q);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -200,5 +419,11 @@ int main(int argc, char **argv)
     qtest_add_func("/xt4/fault/mmu", mmu_fault);
     qtest_add_func("/xt4/fault/arm-svc", arm_svc);
     qtest_add_func("/xt4/fault/thumb-svc", thumb_svc);
+    qtest_add_func("/xt4/ports/masked", port_masked_updates);
+    qtest_add_func("/xt4/ports/two-bit", port_two_bit_masks);
+    qtest_add_func("/xt4/ports/full-word", port_full_word_rmw);
+    qtest_add_func("/xt4/ports/reset", port_reset);
+    qtest_add_func("/xt4/ports/unknown-reads", port_unknown_reads);
+    qtest_add_func("/xt4/ports/invalid", port_invalid_operations);
     return g_test_run();
 }

@@ -3,6 +3,7 @@
 #define HW_ARM_XT4_H
 
 #include "hw/core/boards.h"
+#include "hw/gpio/xt4-ports.h"
 #include "target/arm/cpu.h"
 #include "system/memory.h"
 
@@ -14,6 +15,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(XT4CPU, XT4_CPU)
 typedef struct XT4Stop {
     const char *reason;
     const char *access;
+    const char *device, *detail;
     uint64_t virtual_address, physical_address, value;
     unsigned width;
     int exception;
@@ -32,6 +34,8 @@ typedef struct XT4ProfileDefinition XT4ProfileDefinition;
 struct XT4State {
     MachineState parent_obj;
     XT4CPU *cpu;
+    XT4PortsState *ports;
+    const char *pending_device, *pending_detail;
     char *run_dir;
     const XT4ProfileDefinition *profile;
     MemoryRegion ram[6], unknown;

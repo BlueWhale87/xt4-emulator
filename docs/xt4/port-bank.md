@@ -23,6 +23,14 @@ A separate register at `0xfff41500` has an indexed one-bit mask/value setter and
 
 “GPIO-like port control” is an inference from the addressing and bit APIs. No vendor peripheral name, pin-to-camera-control mapping, interrupt behavior, pull behavior or input/output coupling has been recovered. A flat read/write RAM block would mishandle command masks and sampled inputs.
 
+## Development model checkpoint
+
+`xt4-port-config-v1` now implements a bounded logical configuration model in `hw/gpio/xt4-ports.c`, enabled only by the fixed `bootstrap-port-config-diagnostic` profile. This checkpoint has register-level tests; continuation of the original firmware and CLI/report integration are the next step.
+
+The model tracks values and known bits separately. Masked commands define only the selected low-half bits; their upper readback bits remain unknown, so full-word reads still fail. Selectors 6/7 become fully readable only after a full-word write. Unknown reset state and external samples never become invented zeros. Selector 3/4 half-field masks, reserved offsets, input writes, unsupported widths and misalignment are rejected before model state changes. Guest device-memory misalignment can instead trap in the CPU before MMIO; the diagnostic preserves that architectural stop.
+
+No electrical pin behavior, interrupts, host GPIO, input fixtures or timer behavior is added. The two earlier profiles remain unchanged. This is an inferred software interface, not a measured peripheral implementation.
+
 ## Next dependencies
 
 Initializer `0x1244` writes selectors **6, 3, 4, 2, 0, 1** for every port: 96 writes. It then writes selector 7 of port 2 at `0xfff4109c`, value `0x00015555`. Its source tables begin at `0xa188`, with 28-byte rows.

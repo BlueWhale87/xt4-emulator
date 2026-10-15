@@ -1,3 +1,6 @@
+config FUJIFILM_XT4_PORTS
+    bool
+
 config PL061
     bool
 

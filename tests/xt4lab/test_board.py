@@ -101,5 +101,26 @@ class BoardTests(unittest.TestCase):
             start = data['starting_states'][0]['registers']
             self.assertEqual((start['r15'], start['r13']), (0, 0))
 
+    def test_engine_rejects_model_disagreement(self):
+        with tempfile.TemporaryDirectory(dir=REPO / 'runs') as tmp:
+            cases = [('bootstrap-entry-diagnostic', ['xt4-port-config-v1']),
+                     ('bootstrap-port-config-diagnostic', []),
+                     ('bootstrap-port-config-diagnostic', ['unknown-model'])]
+            for index, (name, models) in enumerate(cases):
+                with self.subTest(name=name, models=models):
+                    run = prepare_run(RESEARCH, Path(tmp) / str(index), name)
+                    p = run.directory / 'profile.json'
+                    data = json.loads(p.read_text())
+                    data['models'] = models
+                    p.write_text(json.dumps(data))
+                    try:
+                        result = subprocess.run([str(QEMU), '-machine',
+                            'fujifilm-xt4,run-dir=' + str(run.directory), '-display', 'none',
+                            '-nodefaults', '-S'], capture_output=True, timeout=2)
+                    except subprocess.TimeoutExpired:
+                        self.fail('C loader accepted a mismatched device model')
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse((run.directory / 'engine-events.jsonl').exists())
+
 if __name__ == '__main__':
     unittest.main()
