@@ -512,7 +512,8 @@ static void device_fault(const char *profile, const char *scenario, const char *
     g_autofree char *quoted = g_shell_quote(run);
     QTestState *q = (!strcmp(profile, "bootstrap-timer-exploration") ||
                     !strcmp(profile, "bootstrap-controller-exploration") ||
-                    !strcmp(profile, "bootstrap-flash-exploration")) ?
+                    !strcmp(profile, "bootstrap-flash-exploration") ||
+                    !strcmp(profile, "bootstrap-phy-exploration")) ?
         qtest_initf("-machine fujifilm-xt4,run-dir=%s -nodefaults -nic none -S "
                     "-accel tcg,thread=single -icount shift=0,align=off,sleep=off", quoted) :
         start(run, true);
@@ -1319,6 +1320,174 @@ static void flash_terminal_pending(void)
     }
 }
 
+#define PHY_BASE 0xfffd80b4
+#define PHY_MODEL "xt4-cadence-phy-exploration-v1"
+
+static QTestState *new_phy(char **run)
+{
+    *run = new_fixture_scenario("bootstrap-phy-exploration", "zero-ports-v1");
+    QTestState *q = start(*run, false);
+    qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+    return q;
+}
+
+static void phy_error(const char *run, const char *detail)
+{
+    QDict *e = controller_result(run, PHY_MODEL, false, detail);
+    qobject_unref(e);
+}
+
+static unsigned phy_transitions(const char *run, int64_t *when)
+{
+    g_autofree char *path = g_build_filename(run, "engine-events.jsonl", NULL);
+    g_autofree char *text = NULL;
+    g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
+    g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+    unsigned count = 0;
+    for (int i = 0; lines[i] && *lines[i]; i++) {
+        QDict *e = qobject_to(QDict, qobject_from_json(lines[i], NULL));
+        if (!g_strcmp0(qdict_get_try_str(e, "event"), "device-transition") &&
+            !g_strcmp0(qdict_get_try_str(e, "device"), PHY_MODEL)) {
+            count++;
+            g_assert_true(qdict_get_bool(e, "success"));
+            g_assert_cmpint(qobject_type(qdict_get(e, "width")), ==, QTYPE_QNULL);
+            g_assert_cmpint(qobject_type(qdict_get(e, "value")), ==, QTYPE_QNULL);
+            if (when) {
+                *when = qdict_get_int(e, "virtual_ns");
+            }
+        }
+        qobject_unref(e);
+    }
+    return count;
+}
+
+static void phy_stage_master(QTestState *q)
+{
+    qtest_writel(q, FLASH_BASE, 0x800c9);
+    qtest_writel(q, PHY_BASE, 0);
+    qtest_writel(q, PHY_BASE + 4, 30);
+    qtest_writel(q, PHY_BASE, 0x40000000);
+}
+
+static void phy_lifecycle(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_phy(&run);
+    qtest_readl(q, PHY_BASE); phy_error(run, "unknown_phy_register");
+    qtest_writel(q, PHY_BASE, 0); phy_error(run, "unknown_phy_controller_config");
+    g_assert_cmphex(qtest_readl(q, PHY_BASE + 8), ==, 0);
+    qtest_writel(q, FLASH_BASE, 0x800c8);
+    flash_error(run, "disabled_phy_controller");
+    qtest_readl(q, FLASH_BASE); flash_error(run, "unknown_flash_register");
+    qtest_writel(q, FLASH_BASE, 0x800c1);
+    qtest_writel(q, PHY_BASE, 0x80200020);
+    g_assert_cmphex(qtest_readl(q, PHY_BASE), ==, 0x80200020);
+    qtest_writel(q, PHY_BASE + 4, 30); phy_error(run, "disabled_phy");
+    phy_stage_master(q);
+    QDict *e = controller_result(run, PHY_MODEL, true, NULL); qobject_unref(e);
+    g_assert_cmphex(qtest_readl(q, PHY_BASE + 8), ==, 0);
+    qtest_writel(q, FLASH_BASE, 0x800c1);
+    flash_error(run, "busy_phy_controller_config");
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE), ==, 0x800800c9);
+    qtest_clock_step(q, 3);
+    g_assert_cmphex(qtest_readl(q, PHY_BASE + 8), ==, 0);
+    g_assert_cmpuint(phy_transitions(run, NULL), ==, 0);
+    qtest_clock_step(q, 1);
+    g_assert_cmphex(qtest_readl(q, PHY_BASE + 8), ==, 0x8000);
+    int64_t when;
+    g_assert_cmpuint(phy_transitions(run, &when), ==, 1);
+    g_assert_cmpint(when, ==, 4);
+    qtest_writel(q, PHY_BASE, 0xc01f0020);
+    qtest_clock_step(q, 3);
+    g_assert_cmphex(qtest_readl(q, PHY_BASE + 8), ==, 0x8000);
+    qtest_clock_step(q, 1);
+    g_assert_cmphex(qtest_readl(q, PHY_BASE + 8), ==, 0x8001);
+    g_assert_cmpuint(phy_transitions(run, &when), ==, 2);
+    g_assert_cmpint(when, ==, 8);
+    qtest_writel(q, PHY_BASE, 0);
+    g_assert_cmphex(qtest_readl(q, PHY_BASE + 8), ==, 0);
+    qtest_writel(q, PHY_BASE, 0x40000000); phy_error(run, "unstaged_phy_master");
+    qtest_clock_step(q, 100);
+    g_assert_cmpuint(phy_transitions(run, NULL), ==, 2);
+    qtest_quit(q);
+}
+
+static void phy_invalid_and_reset(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_phy(&run);
+    qtest_writel(q, FLASH_BASE, 0x800c9);
+    qtest_writeb(q, PHY_BASE, 1); phy_error(run, "unsupported_phy_access");
+    qtest_writew(q, PHY_BASE, 1); phy_error(run, "unsupported_phy_access");
+    qtest_writel(q, PHY_BASE + 1, 1); phy_error(run, "unsupported_phy_access");
+    qtest_writeq(q, PHY_BASE, UINT64_MAX);
+    QDict *e = controller_result(run, PHY_MODEL, false, "unsupported_phy_access");
+    assert_unsigned_value(e, UINT64_MAX); qobject_unref(e);
+    qtest_readl(q, PHY_BASE); phy_error(run, "unknown_phy_register");
+    qtest_writel(q, PHY_BASE + 8, 0x8001); phy_error(run, "readonly_phy_observable");
+    qtest_writel(q, PHY_BASE, 0xc01f0000); phy_error(run, "unstaged_phy_resync");
+    qtest_writel(q, PHY_BASE, 0);
+    qtest_writel(q, PHY_BASE + 4, 31); phy_error(run, "unsupported_phy_master");
+    qtest_readl(q, PHY_BASE + 4); phy_error(run, "unknown_phy_register");
+    qtest_writel(q, PHY_BASE, 0xc0200000); phy_error(run, "unsupported_phy_configuration");
+    g_assert_cmphex(qtest_readl(q, PHY_BASE), ==, 0);
+    qtest_writel(q, PHY_BASE + 4, 40);
+    qtest_writel(q, PHY_BASE, 0x40000000);
+    qtest_writel(q, PHY_BASE + 4, 50); phy_error(run, "busy_phy");
+    qtest_clock_step(q, 3);
+    qtest_writel(q, PHY_BASE, 0); /* Reset cancels the in-flight release. */
+    qtest_clock_step(q, 100);
+    g_assert_cmpuint(phy_transitions(run, NULL), ==, 0);
+    g_assert_cmphex(qtest_readl(q, PHY_BASE + 8), ==, 0);
+    qtest_writel(q, PHY_BASE + 4, 50);
+    qtest_writel(q, PHY_BASE, 0x40000000);
+    qtest_clock_step(q, 4);
+    qtest_writel(q, PHY_BASE, 0xc01f007f);
+    qtest_system_reset(q);
+    qtest_clock_step(q, 100);
+    g_assert_cmpuint(phy_transitions(run, NULL), ==, 1);
+    qtest_readl(q, PHY_BASE); phy_error(run, "unknown_phy_register");
+    qtest_readl(q, PHY_BASE + 4); phy_error(run, "unknown_phy_register");
+    g_assert_cmphex(qtest_readl(q, PHY_BASE + 8), ==, 0);
+    qtest_quit(q);
+    device_fault("bootstrap-phy-exploration", "zero-ports-v1", PHY_MODEL,
+                 PHY_BASE + 4, 0xe1c020f0, true, 8, UINT64_MAX, "unsupported_phy_access", false);
+}
+
+static void phy_overflow(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_phy(&run);
+    qtest_writel(q, FLASH_BASE, 0x800c9);
+    qtest_writel(q, PHY_BASE, 0);
+    qtest_writel(q, PHY_BASE + 4, 30);
+    qtest_clock_set(q, INT64_MAX - 3);
+    qtest_writel(q, PHY_BASE, 0x40000000); phy_error(run, "unsupported_phy_deadline");
+    g_assert_cmphex(qtest_readl(q, PHY_BASE), ==, 0);
+    g_assert_cmphex(qtest_readl(q, PHY_BASE + 8), ==, 0);
+    g_assert_cmpuint(phy_transitions(run, NULL), ==, 0);
+    qtest_quit(q);
+}
+
+static void phy_budget_pending(void)
+{
+    const unsigned budgets[] = {2, 4};
+    for (int i = 0; i < G_N_ELEMENTS(budgets); i++) {
+        g_autofree char *run = new_fixture_scenario("bootstrap-phy-exploration", "zero-ports-v1");
+        QTestState *q = start_budget(run, budgets[i]);
+        qtest_writel(q, 0, 0xeafffffe);
+        phy_stage_master(q);
+        qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+        qtest_qmp_eventwait(q, "STOP");
+        QDict *stop = stop_record(run);
+        g_assert_cmpstr(qdict_get_str(stop, "reason"), ==, "instruction_budget");
+        qobject_unref(stop);
+        g_assert_cmpuint(phy_transitions(run, NULL), ==, 0);
+        g_assert_cmphex(qtest_readl(q, PHY_BASE + 8), ==, 0);
+        qtest_quit(q);
+    }
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -1349,6 +1518,10 @@ int main(int argc, char **argv)
     qtest_add_func("/xt4/budget/faults", budget_strict_faults);
     qtest_add_func("/xt4/budget/pause-reset-idle-warp", budget_pause_reset_idle_warp);
     qtest_add_func("/xt4/budget/timer-order", budget_timer_order);
+    qtest_add_func("/xt4/phy/lifecycle", phy_lifecycle);
+    qtest_add_func("/xt4/phy/invalid-reset", phy_invalid_and_reset);
+    qtest_add_func("/xt4/phy/overflow", phy_overflow);
+    qtest_add_func("/xt4/phy/budget-pending", phy_budget_pending);
     qtest_add_func("/xt4/flash/disabled-execute", flash_disabled_execute);
     qtest_add_func("/xt4/flash/lifecycle", flash_lifecycle);
     qtest_add_func("/xt4/flash/mode-status", flash_mode_and_status);

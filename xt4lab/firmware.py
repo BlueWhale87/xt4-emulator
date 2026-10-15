@@ -54,7 +54,8 @@ def load_profile(name: str, *, scenario_name: str | None = None) -> BootProfile:
                 'bootstrap-input-exploration': 'xt4-212-inputs.json',
                 'bootstrap-timer-exploration': 'xt4-212-timer.json',
                 'bootstrap-controller-exploration': 'xt4-212-controller.json',
-                'bootstrap-flash-exploration': 'xt4-212-flash.json'}
+                'bootstrap-flash-exploration': 'xt4-212-flash.json',
+                'bootstrap-phy-exploration': 'xt4-212-phy.json'}
     if name not in profiles:
         raise ValueError('Unsupported profile')
     data = json.loads(Path(__file__).with_name('profiles').joinpath(profiles[name]).read_text())
@@ -62,12 +63,13 @@ def load_profile(name: str, *, scenario_name: str | None = None) -> BootProfile:
     data['regions'] = tuple(Region(**r) for r in data['regions'])
     data['assumptions'] = tuple(data['assumptions'])
     data['models'] = tuple(data.get('models', ()))
-    if name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration'):
+    if name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration'):
         if scenario_name is None:
             raise ValueError('Exploration requires an explicit synthetic scenario')
         data['scenario'] = load_scenario(scenario_name, timer=name != 'bootstrap-input-exploration',
-                                         platform=name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration'),
-                                         flash=name == 'bootstrap-flash-exploration')
+                                         platform=name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration'),
+                                         flash=name in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration'),
+                                         phy=name == 'bootstrap-phy-exploration')
     elif scenario_name is not None:
         raise ValueError('Synthetic scenario is not allowed on this profile')
     profile = BootProfile(**data)
@@ -87,13 +89,18 @@ def validate_profile(profile: BootProfile) -> None:
                        'bootstrap-flash-exploration': ('xt4-port-config-v1', 'xt4-static-port-input-v1',
                            'xt4-timer-exploration-v1', 'xt4-transfer-enable-exploration-v1',
                            'xt4-clock-apply-exploration-v1', 'xt4-cadence-stig-exploration-v1',
-                           'mx25um51245gxdi00-boot-v1')}
+                           'mx25um51245gxdi00-boot-v1'),
+                       'bootstrap-phy-exploration': ('xt4-port-config-v1', 'xt4-static-port-input-v1',
+                           'xt4-timer-exploration-v1', 'xt4-transfer-enable-exploration-v1',
+                           'xt4-clock-apply-exploration-v1', 'xt4-cadence-stig-exploration-v1',
+                           'mx25um51245gxdi00-boot-v1', 'xt4-cadence-phy-exploration-v1')}
     if profile.name not in expected_models or profile.models != expected_models[profile.name]:
         raise ValueError('Unsupported profile model set')
-    if profile.name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration'):
+    if profile.name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration'):
         validate_scenario(profile.scenario, timer=profile.name != 'bootstrap-input-exploration',
-                          platform=profile.name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration'),
-                          flash=profile.name == 'bootstrap-flash-exploration')
+                          platform=profile.name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration'),
+                          flash=profile.name in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration'),
+                          phy=profile.name == 'bootstrap-phy-exploration')
     elif profile.scenario is not None:
         raise ValueError('Scenario is not allowed on a diagnostic profile')
     extents = []

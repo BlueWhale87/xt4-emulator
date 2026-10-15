@@ -15,3 +15,5 @@ system_ss.add(when: 'CONFIG_BCM2835_SPI', if_true: files('bcm2835_spi.c'))
 system_ss.add(when: 'CONFIG_PNV_SPI', if_true: files('pnv_spi.c'))
 
 system_ss.add(when: 'CONFIG_FUJIFILM_XT4_FLASH', if_true: files('xt4-flash.c', '../block/xt4-nor-boot.c'))
+
+system_ss.add(when: 'CONFIG_FUJIFILM_XT4_PHY', if_true: files('xt4-phy.c'))

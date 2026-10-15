@@ -35,3 +35,6 @@ config ALLWINNER_A10_SPI
 
 config FUJIFILM_XT4_FLASH
     bool
+
+config FUJIFILM_XT4_PHY
+    bool
