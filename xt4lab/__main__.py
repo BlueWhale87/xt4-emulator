@@ -14,7 +14,7 @@ def main():
     run = commands.add_parser('run')
     run.add_argument('--research-root',type=Path,required=True)
     run.add_argument('--out',type=Path,required=True)
-    run.add_argument('--profile',choices=['module-entry-diagnostic','validation'],default='module-entry-diagnostic')
+    run.add_argument('--profile',choices=['module-entry-diagnostic','bootstrap-entry-diagnostic','validation'],default='module-entry-diagnostic')
     run.add_argument('--steps',type=int,default=1000)
     run.add_argument('--interactive',action='store_true')
     args = parser.parse_args()

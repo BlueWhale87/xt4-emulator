@@ -7,7 +7,7 @@
 #define ENTRY 0x012910c4
 #define SENTINEL 0x01022000
 
-static char *new_fixture(void)
+static char *new_fixture_profile(const char *profile)
 {
     const char *root = g_getenv("XT4_RUN_ROOT");
     g_assert_nonnull(root);
@@ -17,15 +17,20 @@ static char *new_fixture(void)
     char *run = g_build_filename(tmp, "run", NULL);
     const char *script = "from pathlib import Path; import sys; "
         "from xt4lab.firmware import prepare_run; "
-        "prepare_run(Path(sys.argv[1]).resolve(),Path(sys.argv[2]).resolve(),'module-entry-diagnostic')";
-    char *args[] = {(char *)g_getenv("XT4_PYTHON"), "-c", (char *)script,
-                   (char *)g_getenv("XT4_RESEARCH_ROOT"), run, NULL};
+        "prepare_run(Path(sys.argv[1]).resolve(),Path(sys.argv[2]).resolve(),sys.argv[3])";
+    char *args[] = {(char *)g_getenv("XT4_PYTHON"), (char *)"-c", (char *)script,
+                   (char *)g_getenv("XT4_RESEARCH_ROOT"), run, (char *)profile, NULL};
     int status;
     g_assert_true(g_spawn_sync(g_getenv("XT4_SOURCE"), args, NULL, 0, NULL,
                               NULL, NULL, NULL, &status, NULL));
     g_assert_cmpint(status, ==, 0);
     g_free(tmp);
     return run;
+}
+
+static char *new_fixture(void)
+{
+    return new_fixture_profile("module-entry-diagnostic");
 }
 
 static QTestState *start(const char *run, bool tcg)
@@ -73,6 +78,34 @@ static void test_xt4_memory_and_reset(void)
     g_assert_cmphex(qtest_readl(q, 0x01021004), ==, 0x01021000);
     g_assert_cmphex(qtest_readl(q, ENTRY), ==, 0xe92d4810);
     g_assert_cmpuint(qtest_readb(q, 0x017349f8), ==, 0);
+    qtest_quit(q);
+}
+
+static void test_xt4_bootstrap_memory_reset(void)
+{
+    g_autofree char *run = new_fixture_profile("bootstrap-entry-diagnostic");
+    QTestState *q = start(run, false);
+    g_assert_cmphex(qtest_readl(q, 0), ==, 0xe59ff018);
+    g_assert_cmphex(qtest_readl(q, 0x20), ==, 0x100);
+    g_assert_cmphex(qtest_readl(q, 0xb060), ==, 1);
+    qtest_writel(q, 0, 0);
+    qtest_writeb(q, 0x1b0bf, 0xa5);
+    qtest_system_reset(q);
+    g_assert_cmphex(qtest_readl(q, 0), ==, 0xe59ff018);
+    g_assert_cmpuint(qtest_readb(q, 0x1b0bf), ==, 0);
+    g_autofree char *path = g_build_filename(run, "engine-events.jsonl", NULL);
+    g_autofree char *text = NULL;
+    g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
+    g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+    for (int i = 0; lines[i] && *lines[i]; i++) {
+        QDict *event = qobject_to(QDict, qobject_from_json(lines[i], NULL));
+        g_assert_nonnull(event);
+        g_assert_cmpstr(qdict_get_str(event, "profile"), ==, "bootstrap-entry-diagnostic");
+        QDict *regs = qdict_get_qdict(event, "registers");
+        g_assert_cmphex(qdict_get_int(regs, "r15"), ==, 0);
+        g_assert_cmphex(qdict_get_int(regs, "r13"), ==, 0);
+        qobject_unref(event);
+    }
     qtest_quit(q);
 }
 
@@ -159,6 +192,7 @@ int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
     qtest_add_func("/xt4/memory-reset", test_xt4_memory_and_reset);
+    qtest_add_func("/xt4/bootstrap-memory-reset", test_xt4_bootstrap_memory_reset);
     qtest_add_func("/xt4/fault/read", read_fault);
     qtest_add_func("/xt4/fault/write", write_fault);
     qtest_add_func("/xt4/fault/fetch", fetch_fault);

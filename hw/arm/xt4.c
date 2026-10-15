@@ -16,17 +16,42 @@
 #include "semihosting/semihost.h"
 #include "target/arm/internals.h"
 
-static const uint32_t bases[] = {0x01021000, 0x01e0f000, 0x03979000,
-                                 0x01735000, 0x0270f000, 0x7fff0000};
-static const uint32_t sizes[] = {0x714000, 0x900000, 0x9c4000,
-                                 0x6da000, 0x126a000, 0x10000};
-static const size_t image_sizes[] = {7420408, 9437184, 10240000};
-static const char *const names[] = {"primary", "secondary", "wireless",
-    "primary-tail", "secondary-tail", "synthetic-stack"};
-static const char *const hashes[] = {
-    "0b5b0fb0ee5fe6b109dae9964b5cddfe18edab46b4a0c195f9da194448906eeb",
-    "e1ef8b30903d3078fde103cdd134fca7bfc4337d67bcaf55c3080ffd5fd93b13",
-    "6c8d7b8b0a37df8c2b636c504c07a80318243b313d5bf435e2c39ef3f56e9f80"
+typedef struct XT4RegionDefinition {
+    const char *name;
+    uint32_t base, size;
+    size_t image_size;
+    const char *hash;
+} XT4RegionDefinition;
+
+struct XT4ProfileDefinition {
+    const char *name;
+    uint32_t entry, sp;
+    const XT4RegionDefinition *regions;
+    size_t region_count;
+};
+
+static const XT4RegionDefinition module_regions[] = {
+    { "primary", 0x01021000, 0x714000, 7420408,
+      "0b5b0fb0ee5fe6b109dae9964b5cddfe18edab46b4a0c195f9da194448906eeb" },
+    { "secondary", 0x01e0f000, 0x900000, 9437184,
+      "e1ef8b30903d3078fde103cdd134fca7bfc4337d67bcaf55c3080ffd5fd93b13" },
+    { "wireless", 0x03979000, 0x9c4000, 10240000,
+      "6c8d7b8b0a37df8c2b636c504c07a80318243b313d5bf435e2c39ef3f56e9f80" },
+    { "primary-tail", 0x01735000, 0x6da000, 0, NULL },
+    { "secondary-tail", 0x0270f000, 0x126a000, 0, NULL },
+    { "synthetic-stack", 0x7fff0000, 0x10000, 0, NULL },
+};
+
+static const XT4RegionDefinition bootstrap_regions[] = {
+    { "bootstrap", 0, 0x1b0c0, 0xc880,
+      "bf2d1d4ca9d1d60e5125a964988a3f1852e177c3176d35dc59dcc63afe41f6b1" },
+};
+
+static const XT4ProfileDefinition profiles[] = {
+    { "module-entry-diagnostic", 0x012910c4, 0x80000000,
+      module_regions, G_N_ELEMENTS(module_regions) },
+    { "bootstrap-entry-diagnostic", 0, 0,
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions) },
 };
 
 static G_NORETURN void invalid(const char *message)
@@ -143,10 +168,11 @@ static void reset(void *opaque)
     ARMCPU *cpu = ARM_CPU(s->cpu);
     CPUARMState *env = &cpu->env;
     cpu_reset(CPU(cpu));
-    for (int i = 0; i < G_N_ELEMENTS(bases); i++) {
+    for (int i = 0; i < s->profile->region_count; i++) {
+        const XT4RegionDefinition *r = &s->profile->regions[i];
         uint8_t *ram = memory_region_get_ram_ptr(&s->ram[i]);
-        memset(ram, 0, sizes[i]);
-        if (i < 3) {
+        memset(ram, 0, r->size);
+        if (r->image_size) {
             memcpy(ram, s->images[i], s->image_sizes[i]);
         }
     }
@@ -155,16 +181,16 @@ static void reset(void *opaque)
     }
     cpsr_write(env, 0x1d3, UINT32_MAX, CPSRWriteRaw);
     env->cp15.sctlr_el[1] &= ~(SCTLR_M | SCTLR_C | SCTLR_I | SCTLR_B | SCTLR_EE);
-    env->regs[13] = 0x80000000;
+    env->regs[13] = s->profile->sp;
     env->regs[14] = 0xfffffff0;
-    env->regs[15] = 0x012910c4;
+    env->regs[15] = s->profile->entry;
     arm_rebuild_hflags(env);
     s->stopped = false;
     s->pending_write = false;
     QDict *event = qdict_new();
     qdict_put_str(event, "event", "reset");
     qdict_put_bool(event, "camera_booted", false);
-    qdict_put_str(event, "profile", "module-entry-diagnostic");
+    qdict_put_str(event, "profile", s->profile->name);
     QDict *registers = qdict_new();
     for (int i = 0; i < 16; i++) {
         g_autofree char *name = g_strdup_printf("r%d", i);
@@ -187,20 +213,27 @@ static void reset(void *opaque)
     emit(s, event);
 }
 
-static void validate_profile(int dir)
+static const XT4ProfileDefinition *validate_profile(int dir)
 {
     size_t len;
     g_autofree uint8_t *text = read_file(dir, "profile.json", &len);
     g_autoptr(QDict) p = qobject_to(QDict, qobject_from_json((char *)text, NULL));
-    if (!p || qdict_get_try_int(p, "schema_version", -1) != 1 ||
-        g_strcmp0(qdict_get_try_str(p, "name"), "module-entry-diagnostic") ||
+    const XT4ProfileDefinition *profile = NULL;
+    for (int i = 0; p && i < G_N_ELEMENTS(profiles); i++) {
+        if (!g_strcmp0(qdict_get_try_str(p, "name"), profiles[i].name)) {
+            profile = &profiles[i];
+            break;
+        }
+    }
+    if (!profile || qdict_get_try_int(p, "schema_version", -1) != 1 ||
         g_strcmp0(qdict_get_try_str(p, "cpu_type"), TYPE_XT4_CPU) ||
-        qdict_get_try_int(p, "entry", -1) != 0x012910c4) {
+        qdict_get_try_int(p, "entry", -1) != profile->entry) {
         invalid("unsupported or invalid profile");
     }
     QList *regions = qobject_to(QList, qdict_get(p, "regions"));
     QDict *regs = qobject_to(QDict, qdict_get(p, "registers"));
-    if (!regions || qlist_size(regions) != 6 || !regs || qdict_size(regs) != 16) {
+    if (!regions || qlist_size(regions) != profile->region_count ||
+        !regs || qdict_size(regs) != 16) {
         invalid("invalid profile memory/register set");
     }
     for (int i = 0; i < 13; i++) {
@@ -209,7 +242,7 @@ static void validate_profile(int dir)
             invalid("unsupported starting register state");
         }
     }
-    if (qdict_get_try_int(regs, "sp", -1) != 0x80000000 ||
+    if (qdict_get_try_int(regs, "sp", -1) != profile->sp ||
         qdict_get_try_int(regs, "lr", -1) != 0xfffffff0 ||
         qdict_get_try_int(regs, "cpsr", -1) != 0x1d3) {
         invalid("unsupported starting register state");
@@ -218,18 +251,20 @@ static void validate_profile(int dir)
     int i = 0;
     QLIST_FOREACH_ENTRY(regions, entry) {
         QDict *r = qobject_to(QDict, qlist_entry_obj(entry));
-        g_autofree char *file = i < 3 ?
-            g_strdup_printf("inputs/%s.bin", names[i]) : NULL;
-        if (!r || g_strcmp0(qdict_get_try_str(r, "name"), names[i]) ||
-            qdict_get_try_int(r, "base", -1) != bases[i] ||
-            qdict_get_try_int(r, "size", -1) != sizes[i] ||
-            qdict_get_try_int(r, "file_size", -1) != (i < 3 ? image_sizes[i] : 0) ||
+        const XT4RegionDefinition *def = &profile->regions[i];
+        g_autofree char *file = def->image_size ?
+            g_strdup_printf("inputs/%s.bin", def->name) : NULL;
+        if (!r || g_strcmp0(qdict_get_try_str(r, "name"), def->name) ||
+            qdict_get_try_int(r, "base", -1) != def->base ||
+            qdict_get_try_int(r, "size", -1) != def->size ||
+            qdict_get_try_int(r, "file_size", -1) != def->image_size ||
             g_strcmp0(qdict_get_try_str(r, "file"), file) ||
-            g_strcmp0(qdict_get_try_str(r, "sha256"), i < 3 ? hashes[i] : NULL)) {
+            g_strcmp0(qdict_get_try_str(r, "sha256"), def->hash)) {
             invalid("unverified memory profile");
         }
         i++;
     }
+    return profile;
 }
 
 static void init(MachineState *machine)
@@ -249,17 +284,23 @@ static void init(MachineState *machine)
     if (dir < 0) {
         invalid("cannot open run directory");
     }
-    validate_profile(dir);
+    s->profile = validate_profile(dir);
+    g_assert(s->profile->region_count <= G_N_ELEMENTS(s->ram));
+    g_assert(s->profile->region_count <= G_N_ELEMENTS(s->images));
     int inputs = openat(dir, "inputs", O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
     if (inputs < 0) {
         invalid("missing regular input directory");
     }
-    for (int i = 0; i < 3; i++) {
-        g_autofree char *file = g_strdup_printf("%s.bin", names[i]);
+    for (int i = 0; i < s->profile->region_count; i++) {
+        const XT4RegionDefinition *def = &s->profile->regions[i];
+        if (!def->image_size) {
+            continue;
+        }
+        g_autofree char *file = g_strdup_printf("%s.bin", def->name);
         s->images[i] = read_file(inputs, file, &s->image_sizes[i]);
         g_autofree char *hash = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
                                                s->images[i], s->image_sizes[i]);
-        if (s->image_sizes[i] != image_sizes[i] || strcmp(hash, hashes[i])) {
+        if (s->image_sizes[i] != def->image_size || strcmp(hash, def->hash)) {
             invalid("decoded image fingerprint mismatch");
         }
     }
@@ -273,10 +314,11 @@ static void init(MachineState *machine)
     memory_region_init_io(&s->unknown, OBJECT(machine), &unknown_ops,
                            s, "xt4-unsupported", UINT64_C(0x100000000));
     memory_region_add_subregion_overlap(get_system_memory(), 0, &s->unknown, -1);
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < s->profile->region_count; i++) {
+        const XT4RegionDefinition *def = &s->profile->regions[i];
         memory_region_init_ram_flags_nomigrate(&s->ram[i], OBJECT(machine),
-                               names[i], sizes[i], 0, &error_fatal);
-        memory_region_add_subregion(get_system_memory(), bases[i], &s->ram[i]);
+                               def->name, def->size, 0, &error_fatal);
+        memory_region_add_subregion(get_system_memory(), def->base, &s->ram[i]);
     }
     s->cpu = XT4_CPU(object_new(TYPE_XT4_CPU));
     s->cpu->board = s;

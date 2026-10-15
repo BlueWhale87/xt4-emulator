@@ -27,13 +27,16 @@ struct XT4CPU {
     XT4State *board;
 };
 
+typedef struct XT4ProfileDefinition XT4ProfileDefinition;
+
 struct XT4State {
     MachineState parent_obj;
     XT4CPU *cpu;
     char *run_dir;
+    const XT4ProfileDefinition *profile;
     MemoryRegion ram[6], unknown;
-    uint8_t *images[3];
-    size_t image_sizes[3];
+    uint8_t *images[6];
+    size_t image_sizes[6];
     FILE *events;
     bool stopped, pending_write;
     uint64_t pending_value;

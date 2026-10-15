@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from xt4lab.firmware import prepare_run
@@ -62,6 +63,43 @@ class BoardTests(unittest.TestCase):
                         '-nodefaults','-S'],capture_output=True,timeout=2)
                     self.assertNotEqual(result.returncode,0)
                     self.assertFalse((run.directory / 'engine-events.jsonl').exists())
+
+    def test_bootstrap_revalidation(self):
+        with tempfile.TemporaryDirectory(dir=REPO / 'runs') as tmp:
+            for what in ['register', 'entry', 'size', 'image']:
+                with self.subTest(what=what):
+                    run = prepare_run(RESEARCH, Path(tmp) / what, 'bootstrap-entry-diagnostic')
+                    p = run.directory / 'profile.json'
+                    data = json.loads(p.read_text())
+                    if what == 'register':
+                        data['registers']['sp'] = 0x80000000
+                    elif what == 'entry':
+                        data['entry'] = 0x100
+                    elif what == 'size':
+                        data['regions'][0]['size'] = 0x40000
+                    else:
+                        image = run.directory / 'inputs/bootstrap.bin'
+                        image.chmod(0o600)
+                        image.write_bytes(b'broken')
+                    p.write_text(json.dumps(data))
+                    result = subprocess.run([str(QEMU), '-machine',
+                        'fujifilm-xt4,run-dir=' + str(run.directory), '-display', 'none',
+                        '-nodefaults', '-S'], capture_output=True, timeout=2)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse((run.directory / 'engine-events.jsonl').exists())
+
+    def test_bootstrap_cli_profile(self):
+        with tempfile.TemporaryDirectory(dir=REPO / 'runs') as tmp:
+            path = Path(tmp) / 'cli'
+            result = subprocess.run([sys.executable, '-m', 'xt4lab', 'run',
+                '--research-root', str(RESEARCH), '--out', str(path), '--profile',
+                'bootstrap-entry-diagnostic', '--steps', '1'], cwd=REPO,
+                text=True, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            data = json.loads((path / 'summary.json').read_text())
+            self.assertEqual(data['completed_pcs'], [0])
+            start = data['starting_states'][0]['registers']
+            self.assertEqual((start['r15'], start['r13']), (0, 0))
 
 if __name__ == '__main__':
     unittest.main()
