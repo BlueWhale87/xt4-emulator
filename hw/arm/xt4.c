@@ -36,7 +36,7 @@ struct XT4ProfileDefinition {
     uint32_t entry, sp;
     const XT4RegionDefinition *regions;
     size_t region_count;
-    bool port_config, synthetic_inputs, timer_model;
+    bool port_config, synthetic_inputs, timer_model, platform_model;
 };
 
 static const XT4RegionDefinition module_regions[] = {
@@ -58,15 +58,17 @@ static const XT4RegionDefinition bootstrap_regions[] = {
 
 static const XT4ProfileDefinition profiles[] = {
     { "module-entry-diagnostic", 0x012910c4, 0x80000000,
-      module_regions, G_N_ELEMENTS(module_regions), false, false, false },
+      module_regions, G_N_ELEMENTS(module_regions), false, false, false, false },
     { "bootstrap-entry-diagnostic", 0, 0,
-      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), false, false, false },
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), false, false, false, false },
     { "bootstrap-port-config-diagnostic", 0, 0,
-      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, false, false },
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, false, false, false },
     { "bootstrap-input-exploration", 0, 0,
-      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, false },
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, false, false },
     { "bootstrap-timer-exploration", 0, 0,
-      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true },
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, false },
+    { "bootstrap-controller-exploration", 0, 0,
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true },
 };
 
 static G_NORETURN void invalid(const char *message)
@@ -318,6 +320,79 @@ static void timer_event(void *opaque, const XT4TimerEvent *access)
     }
 }
 
+static QDict *platform_event(XT4State *s, const char *model, const char *semantics,
+                             hwaddr address, unsigned width, uint64_t value,
+                             bool write, bool success, const char *detail,
+                             bool transition, int64_t virtual_ns)
+{
+    if (!transition) {
+        s->pending_write = !success && write;
+        s->pending_value = value;
+        s->pending_address = address;
+        s->pending_width = width;
+        s->pending_device = success ? NULL : model;
+        s->pending_detail = detail;
+    }
+    QDict *event = qdict_new();
+    qdict_put_str(event, "event", transition ? "device-transition" : "device-access");
+    qdict_put_str(event, "device", model);
+    qdict_put_str(event, "semantics", semantics);
+    qdict_put_str(event, "scenario", s->scenario_id);
+    qdict_put_str(event, "operation", transition ? "apply-complete" : write ? "write" : "read");
+    qdict_put_int(event, "address", address);
+    qdict_put_int(event, "virtual_ns", virtual_ns);
+    qdict_put_bool(event, "success", success);
+    if (transition) {
+        qdict_put_null(event, "width");
+        qdict_put_null(event, "value");
+    } else {
+        qdict_put_int(event, "width", width);
+        if (write || success) {
+            qdict_put(event, "value", qnum_from_uint(value));
+        } else {
+            qdict_put_null(event, "value");
+        }
+    }
+    if (detail) {
+        qdict_put_str(event, "detail", detail);
+    }
+    return event;
+}
+
+static void transfer_event(void *opaque, const XT4TransferEvent *access)
+{
+    XT4State *s = opaque;
+    QDict *event = platform_event(s, XT4_TRANSFER_MODEL,
+        "inferred enable bit; explicit synthetic initial words; no DMA/status/IRQ",
+        access->address, access->width, access->value, access->write,
+        access->success, access->detail, false, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+    qdict_put_int(event, "bank", access->bank);
+    qdict_put_int(event, "old_state", access->old_state);
+    qdict_put_int(event, "state", access->state);
+    emit(s, event);
+}
+
+static void clock_apply_event(void *opaque, const XT4ClockApplyEvent *access)
+{
+    XT4State *s = opaque;
+    QDict *event = platform_event(s, XT4_CLOCK_APPLY_MODEL,
+        "synthetic selection latch and latency; no CPU/peripheral frequency change",
+        access->address, access->width, access->value, access->write,
+        access->success, access->detail, access->transition, access->virtual_ns);
+    qdict_put_bool(event, "busy", access->busy);
+    qdict_put_bool(event, "command_known", access->command_known);
+    qdict_put_int(event, "command", access->command);
+    qdict_put_int(event, "deadline_ns", access->deadline_ns);
+    qdict_put_int(event, "shadow_known", access->shadow_known);
+    qdict_put_int(event, "active_known", access->active_known);
+    qdict_put_int(event, "staged", access->staged);
+    qdict_put_int(event, "shadow0", access->shadow[0]);
+    qdict_put_int(event, "shadow1", access->shadow[1]);
+    qdict_put_int(event, "active0", access->active[0]);
+    qdict_put_int(event, "active1", access->active[1]);
+    emit(s, event);
+}
+
 static MemTxResult unknown_read(void *opaque, hwaddr addr, uint64_t *value,
                                 unsigned size, MemTxAttrs attrs)
 {
@@ -361,6 +436,10 @@ static void reset(void *opaque)
     }
     if (s->timer) {
         device_cold_reset(DEVICE(s->timer));
+    }
+    if (s->transfer) {
+        device_cold_reset(DEVICE(s->transfer));
+        device_cold_reset(DEVICE(s->clock_apply));
     }
     for (int i = 0; i < s->profile->region_count; i++) {
         const XT4RegionDefinition *r = &s->profile->regions[i];
@@ -452,7 +531,7 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
     QDict *scenario = qobject_to(QDict, obj);
     const char *id = scenario ? qdict_get_try_str(scenario, "scenario_id") : NULL;
     if (!id || (strcmp(id, "zero-ports-v1") && strcmp(id, "one-ports-v1")) ||
-        qdict_size(scenario) != 3) {
+        qdict_size(scenario) != (profile->platform_model ? 4 : 3)) {
         invalid("explicit supported synthetic scenario required");
     }
     QList *words = qobject_to(QList, qdict_get(scenario, "port_inputs"));
@@ -482,8 +561,33 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
         invalid("timer assumptions not allowed on input-only profile");
     }
     uint32_t expected = !strcmp(id, "zero-ports-v1") ? 0 : UINT32_MAX;
-    g_autoptr(GString) canonical = g_string_new("{\"port_inputs\":[");
+    g_autoptr(GString) canonical = g_string_new("{");
     const QListEntry *entry;
+    if (profile->platform_model) {
+        QDict *platform = qobject_to(QDict, qdict_get(scenario, "platform"));
+        QList *globals = platform ? qobject_to(QList, qdict_get(platform, "transfer_globals")) : NULL;
+        if (!platform || qdict_size(platform) != 2 || !globals || qlist_size(globals) != 16 ||
+            !scenario_number(platform, "clock_apply_latency_ns", 1)) {
+            invalid("unsupported synthetic platform assumptions");
+        }
+        s->clock_apply_latency_ns = 1;
+        g_string_append(canonical, "\"platform\":{\"clock_apply_latency_ns\":1,\"transfer_globals\":[");
+        int index = 0;
+        QLIST_FOREACH_ENTRY(globals, entry) {
+            QNum *number = qobject_to(QNum, qlist_entry_obj(entry));
+            uint64_t value;
+            if (!number || !qnum_get_try_uint(number, &value) || value != expected) {
+                invalid("platform words differ from fixed synthetic identity");
+            }
+            s->transfer_globals[index] = value;
+            g_string_append_printf(canonical, "%s%" PRIu32, index ? "," : "", expected);
+            index++;
+        }
+        g_string_append(canonical, "]},");
+    } else if (qdict_haskey(scenario, "platform")) {
+        invalid("platform assumptions not allowed on older profile");
+    }
+    g_string_append(canonical, "\"port_inputs\":[");
     int i = 0;
     QLIST_FOREACH_ENTRY(words, entry) {
         QNum *number = qobject_to(QNum, qlist_entry_obj(entry));
@@ -521,12 +625,13 @@ static const XT4ProfileDefinition *validate_profile(int dir, XT4State *s)
     QObject *models_obj = qdict_get(p, "models");
     QList *models = qobject_to(QList, models_obj);
     if ((models_obj && !models) ||
-        (profile->port_config ? !models || qlist_size(models) != (1 + profile->synthetic_inputs + profile->timer_model) :
+        (profile->port_config ? !models || qlist_size(models) != (1 + profile->synthetic_inputs + profile->timer_model + 2 * profile->platform_model) :
                                models && qlist_size(models) != 0)) {
         invalid("unsupported device model set");
     }
     if (profile->port_config) {
-        const char *expected[] = {XT4_PORT_CONFIG_MODEL, XT4_STATIC_PORT_INPUT_MODEL, XT4_TIMER_MODEL};
+        const char *expected[] = {XT4_PORT_CONFIG_MODEL, XT4_STATIC_PORT_INPUT_MODEL, XT4_TIMER_MODEL,
+                                  XT4_TRANSFER_MODEL, XT4_CLOCK_APPLY_MODEL};
         const QListEntry *entry;
         int index = 0;
         QLIST_FOREACH_ENTRY(models, entry) {
@@ -646,6 +751,18 @@ static void init(MachineState *machine)
         xt4_timer_set_event_callback(s->timer, timer_event, s);
         sysbus_realize_and_unref(SYS_BUS_DEVICE(s->timer), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(s->timer), 0, 0xfff3c300);
+    }
+    if (s->profile->platform_model) {
+        s->transfer = XT4_TRANSFER(qdev_new(TYPE_XT4_TRANSFER));
+        xt4_transfer_set_initial(s->transfer, s->transfer_globals);
+        xt4_transfer_set_event_callback(s->transfer, transfer_event, s);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(s->transfer), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(s->transfer), 0, 0xfffe0000);
+        s->clock_apply = XT4_CLOCK_APPLY(qdev_new(TYPE_XT4_CLOCK_APPLY));
+        xt4_clock_apply_set_latency(s->clock_apply, s->clock_apply_latency_ns);
+        xt4_clock_apply_set_event_callback(s->clock_apply, clock_apply_event, s);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(s->clock_apply), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(s->clock_apply), 0, 0xff701000);
     }
     s->cpu = XT4_CPU(object_new(TYPE_XT4_CPU));
     s->cpu->board = s;

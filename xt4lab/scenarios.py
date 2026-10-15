@@ -14,23 +14,31 @@ class TimerScenario:
 
 
 @dataclass(frozen=True)
+class PlatformScenario:
+    transfer_globals: tuple[int, ...]
+    clock_apply_latency_ns: int
+
+
+@dataclass(frozen=True)
 class ExplorationScenario:
     scenario_id: str
     port_inputs: tuple[int, ...]
     timer: TimerScenario | None
+    platform: PlatformScenario | None = None
 
 
-def load_scenario(name: str, *, timer: bool) -> ExplorationScenario:
+def load_scenario(name: str, *, timer: bool, platform: bool = False) -> ExplorationScenario:
     if name not in ('zero-ports-v1', 'one-ports-v1'):
         raise ValueError('Unsupported synthetic scenario')
     return ExplorationScenario(name, (0 if name == 'zero-ports-v1' else 0xffffffff,) * 16,
-        TimerScenario(54000000, True, True, 0, True) if timer else None)
+        TimerScenario(54000000, True, True, 0, True) if timer else None,
+        PlatformScenario((0 if name == 'zero-ports-v1' else 0xffffffff,) * 16, 1) if platform else None)
 
 
-def validate_scenario(scenario: ExplorationScenario, *, timer: bool) -> None:
+def validate_scenario(scenario: ExplorationScenario, *, timer: bool, platform: bool = False) -> None:
     if not isinstance(scenario, ExplorationScenario):
         raise ValueError('Explicit synthetic scenario required')
-    expected = load_scenario(scenario.scenario_id, timer=timer)
+    expected = load_scenario(scenario.scenario_id, timer=timer, platform=platform)
     if (type(scenario.port_inputs) is not tuple or len(scenario.port_inputs) != 16
             or any(type(v) is not int or not 0 <= v <= 0xffffffff for v in scenario.port_inputs)
             or scenario != expected):
@@ -41,16 +49,28 @@ def validate_scenario(scenario: ExplorationScenario, *, timer: bool) -> None:
         for key, value in asdict(scenario.timer).items():
             if type(value) is not type(getattr(expected.timer, key)):
                 raise ValueError('Invalid clock field type')
+    if platform:
+        state = scenario.platform
+        if (not isinstance(state, PlatformScenario) or type(state.transfer_globals) is not tuple
+                or len(state.transfer_globals) != 16
+                or any(type(v) is not int for v in state.transfer_globals)
+                or type(state.clock_apply_latency_ns) is not int):
+            raise ValueError('Invalid platform field type')
 
 
 def scenario_dict(scenario: ExplorationScenario | None) -> dict | None:
-    return json.loads(json.dumps(asdict(scenario))) if scenario is not None else None
+    if scenario is None:
+        return None
+    data = asdict(scenario)
+    if scenario.platform is None:
+        data.pop('platform')
+    return json.loads(json.dumps(data))
 
 
-def scenario_from_dict(data: dict, *, timer: bool) -> ExplorationScenario:
+def scenario_from_dict(data: dict, *, timer: bool, platform: bool = False) -> ExplorationScenario:
     if not isinstance(data, dict):
         raise ValueError('Missing synthetic scenario declaration')
-    expected = load_scenario(data.get('scenario_id'), timer=timer)
+    expected = load_scenario(data.get('scenario_id'), timer=timer, platform=platform)
     # Canonical JSON also distinguishes booleans/floats from integer words.
     if json.dumps(data, sort_keys=True, separators=(',', ':')) != json.dumps(
             scenario_dict(expected), sort_keys=True, separators=(',', ':')):

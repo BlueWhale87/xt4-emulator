@@ -510,7 +510,8 @@ static void device_fault(const char *profile, const char *scenario, const char *
 {
     g_autofree char *run = new_fixture_scenario(profile, scenario);
     g_autofree char *quoted = g_shell_quote(run);
-    QTestState *q = !strcmp(profile, "bootstrap-timer-exploration") ?
+    QTestState *q = (!strcmp(profile, "bootstrap-timer-exploration") ||
+                    !strcmp(profile, "bootstrap-controller-exploration")) ?
         qtest_initf("-machine fujifilm-xt4,run-dir=%s -nodefaults -nic none -S "
                     "-accel tcg,thread=single -icount shift=0,align=off,sleep=off", quoted) :
         start(run, true);
@@ -864,6 +865,225 @@ static void timer_invalid_operations(void)
                   0xfff3c311, 0xe5801000, true, 4, 0x10001, "unsupported_timer_access", false);
 }
 
+static QTestState *new_controller(char **run, const char *scenario)
+{
+    *run = new_fixture_scenario("bootstrap-controller-exploration", scenario);
+    QTestState *q = start(*run, false);
+    qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+    return q;
+}
+
+static QDict *controller_result(const char *run, const char *model,
+                               bool success, const char *detail)
+{
+    QDict *event = port_record(run);
+    g_assert_cmpstr(qdict_get_str(event, "device"), ==, model);
+    g_assert_cmpint(qdict_get_bool(event, "success"), ==, success);
+    if (detail) {
+        g_assert_cmpstr(qdict_get_str(event, "detail"), ==, detail);
+    }
+    return event;
+}
+
+#define TRANSFER_MODEL "xt4-transfer-enable-exploration-v1"
+#define CLOCK_MODEL "xt4-clock-apply-exploration-v1"
+
+static void transfer_globals(void)
+{
+    const char *scenarios[] = {"zero-ports-v1", "one-ports-v1"};
+    for (int fixture = 0; fixture < 2; fixture++) {
+        g_autofree char *run = NULL;
+        QTestState *q = new_controller(&run, scenarios[fixture]);
+        uint32_t seed = fixture ? UINT32_MAX : 0;
+        for (int i = 0; i < 16; i++) {
+            uint32_t addr = 0xfffe0000 + i * 0x1000;
+            g_assert_cmphex(qtest_readl(q, addr), ==, seed);
+            qtest_writel(q, addr, seed ^ 0x10000000);
+            QDict *event = controller_result(run, TRANSFER_MODEL, true, NULL);
+            g_assert_cmpuint(qdict_get_int(event, "bank"), ==, i);
+            g_assert_cmphex(qdict_get_int(event, "old_state"), ==, seed);
+            g_assert_cmphex(qdict_get_int(event, "state"), ==, seed ^ 0x10000000);
+            qobject_unref(event);
+            g_assert_cmphex(qtest_readl(q, addr), ==, seed ^ 0x10000000);
+            if (i < 15) {
+                g_assert_cmphex(qtest_readl(q, addr + 0x1000), ==, seed);
+            }
+            qtest_writel(q, addr, seed);
+            g_assert_cmphex(qtest_readl(q, addr), ==, seed);
+            qtest_writel(q, addr, seed ^ 1);
+            event = controller_result(run, TRANSFER_MODEL, false, "unsupported_transfer_global_write");
+            qobject_unref(event);
+            g_assert_cmphex(qtest_readl(q, addr), ==, seed);
+        }
+        qtest_writel(q, 0xfffef000, seed ^ 0x10000000);
+        qtest_system_reset(q);
+        for (int i = 0; i < 16; i++) {
+            g_assert_cmphex(qtest_readl(q, 0xfffe0000 + i * 0x1000), ==, seed);
+        }
+        qtest_quit(q);
+    }
+}
+
+static void transfer_invalid(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_controller(&run, "zero-ports-v1");
+    qtest_writeb(q, 0xfffe0000, 1);
+    QDict *event = controller_result(run, TRANSFER_MODEL, false, "unsupported_transfer_access");
+    qobject_unref(event);
+    qtest_writew(q, 0xfffe0000, 1);
+    event = controller_result(run, TRANSFER_MODEL, false, "unsupported_transfer_access");
+    qobject_unref(event);
+    qtest_writeq(q, 0xfffe0000, UINT64_MAX);
+    event = controller_result(run, TRANSFER_MODEL, false, "unsupported_transfer_access");
+    assert_unsigned_value(event, UINT64_MAX);
+    qobject_unref(event);
+    qtest_writel(q, 0xfffe0001, 0x10000000);
+    event = controller_result(run, TRANSFER_MODEL, false, "unsupported_transfer_access");
+    qobject_unref(event);
+    for (int offset = 4; offset <= 0x30; offset += 4) {
+        qtest_readl(q, 0xfffe0000 + offset);
+        event = controller_result(run, TRANSFER_MODEL, false, "unsupported_transfer_access");
+        g_assert_cmpint(qobject_type(qdict_get(event, "value")), ==, QTYPE_QNULL);
+        qobject_unref(event);
+    }
+    g_assert_cmpuint(qtest_readl(q, 0xfffe0000), ==, 0);
+    qtest_quit(q);
+    device_fault("bootstrap-controller-exploration", "zero-ports-v1", TRANSFER_MODEL,
+                 0xfffe0000, 0xe1c020f0, true, 8, UINT64_MAX, "unsupported_transfer_access", false);
+    device_fault("bootstrap-controller-exploration", "zero-ports-v1", TRANSFER_MODEL,
+                 0xfffe0001, 0xe5801000, true, 4, 0x10000000, "unsupported_transfer_access", false);
+}
+
+static unsigned clock_transitions(const char *run, int64_t *when)
+{
+    g_autofree char *path = g_build_filename(run, "engine-events.jsonl", NULL);
+    g_autofree char *text = NULL;
+    g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
+    g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+    unsigned count = 0;
+    for (int i = 0; lines[i] && *lines[i]; i++) {
+        QDict *event = qobject_to(QDict, qobject_from_json(lines[i], NULL));
+        if (!g_strcmp0(qdict_get_try_str(event, "event"), "device-transition") &&
+            !g_strcmp0(qdict_get_try_str(event, "device"), CLOCK_MODEL)) {
+            count++;
+            g_assert_true(qdict_get_bool(event, "success"));
+            g_assert_cmpint(qobject_type(qdict_get(event, "width")), ==, QTYPE_QNULL);
+            g_assert_cmpint(qobject_type(qdict_get(event, "value")), ==, QTYPE_QNULL);
+            if (when) {
+                *when = qdict_get_int(event, "virtual_ns");
+            }
+        }
+        qobject_unref(event);
+    }
+    return count;
+}
+
+static void clock_apply_lifecycle(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_controller(&run, "zero-ports-v1");
+    qtest_readl(q, 0xff701080);
+    QDict *event = controller_result(run, CLOCK_MODEL, false, "unknown_clock_command_readback");
+    qobject_unref(event);
+    qtest_readl(q, 0xff701040);
+    event = controller_result(run, CLOCK_MODEL, false, "unknown_clock_selection_readback");
+    qobject_unref(event);
+    qtest_writel(q, 0xff701080, 2);
+    event = controller_result(run, CLOCK_MODEL, false, "unstaged_clock_apply");
+    qobject_unref(event);
+    for (int i = 0; i < 2; i++) {
+        int64_t now = i; /* qtest time starts at zero; each apply advances one. */
+        qtest_writel(q, 0xff701040 + i * 8, i ? 0x107 : 0x101);
+        qtest_writel(q, 0xff701080, 2);
+        g_assert_cmpuint(qtest_readl(q, 0xff701080), ==, 2);
+        event = controller_result(run, CLOCK_MODEL, true, NULL);
+        g_assert_true(qdict_get_bool(event, "busy"));
+        g_assert_cmpuint(qdict_get_int(event, "active_known"), ==, i);
+        qobject_unref(event);
+        g_assert_cmpuint(clock_transitions(run, NULL), ==, i);
+        qtest_writel(q, 0xff701080, 2);
+        event = controller_result(run, CLOCK_MODEL, false, "busy_clock_apply");
+        qobject_unref(event);
+        qtest_writel(q, 0xff701040, 0x101);
+        event = controller_result(run, CLOCK_MODEL, false, "busy_clock_apply");
+        qobject_unref(event);
+        qtest_clock_step(q, 1);
+        int64_t when = -1;
+        g_assert_cmpuint(clock_transitions(run, &when), ==, i + 1);
+        g_assert_cmpint(when, ==, now + 1);
+        g_assert_cmpuint(qtest_readl(q, 0xff701080), ==, 0);
+        event = controller_result(run, CLOCK_MODEL, true, NULL);
+        g_assert_false(qdict_get_bool(event, "busy"));
+        g_assert_cmpuint(qdict_get_int(event, "active_known"), ==, i ? 3 : 1);
+        g_assert_cmphex(qdict_get_int(event, "active0"), ==, 0x101);
+        if (i) {
+            g_assert_cmphex(qdict_get_int(event, "active1"), ==, 0x107);
+        }
+        qobject_unref(event);
+        qtest_writel(q, 0xff701080, 2);
+        event = controller_result(run, CLOCK_MODEL, false, "unstaged_clock_apply");
+        qobject_unref(event);
+    }
+    qtest_writel(q, 0xff701040, 0x101);
+    qtest_writel(q, 0xff701080, 2);
+    qtest_system_reset(q);
+    qtest_clock_step(q, 100);
+    g_assert_cmpuint(clock_transitions(run, NULL), ==, 2);
+    qtest_readl(q, 0xff701040);
+    event = controller_result(run, CLOCK_MODEL, false, "unknown_clock_selection_readback");
+    g_assert_cmpuint(qdict_get_int(event, "active_known"), ==, 0);
+    qobject_unref(event);
+    qtest_readl(q, 0xff701080);
+    event = controller_result(run, CLOCK_MODEL, false, "unknown_clock_command_readback");
+    qobject_unref(event);
+    qtest_quit(q);
+}
+
+static void clock_invalid(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_controller(&run, "one-ports-v1");
+    const uint32_t bad[] = {0, 1, 3, 0xffffffff};
+    for (int i = 0; i < G_N_ELEMENTS(bad); i++) {
+        qtest_writel(q, 0xff701080, bad[i]);
+        QDict *event = controller_result(run, CLOCK_MODEL, false, "unsupported_clock_command");
+        qobject_unref(event);
+    }
+    qtest_writel(q, 0xff701040, 0x107);
+    QDict *event = controller_result(run, CLOCK_MODEL, false, "unsupported_clock_selection");
+    qobject_unref(event);
+    qtest_readl(q, 0xff701040);
+    event = controller_result(run, CLOCK_MODEL, false, "unknown_clock_selection_readback");
+    qobject_unref(event);
+    qtest_writeq(q, 0xff701040, UINT64_MAX);
+    event = controller_result(run, CLOCK_MODEL, false, "unsupported_clock_access");
+    assert_unsigned_value(event, UINT64_MAX);
+    qobject_unref(event);
+    qtest_writeb(q, 0xff701080, 2);
+    event = controller_result(run, CLOCK_MODEL, false, "unsupported_clock_access");
+    qobject_unref(event);
+    qtest_writew(q, 0xff701080, 2);
+    event = controller_result(run, CLOCK_MODEL, false, "unsupported_clock_access");
+    qobject_unref(event);
+    qtest_writel(q, 0xff701041, 0x101);
+    event = controller_result(run, CLOCK_MODEL, false, "unsupported_clock_access");
+    qobject_unref(event);
+    qtest_readl(q, 0xff701044);
+    event = controller_result(run, CLOCK_MODEL, false, "unsupported_clock_access");
+    qobject_unref(event);
+    qtest_clock_set(q, INT64_MAX);
+    qtest_writel(q, 0xff701040, 0x101);
+    qtest_writel(q, 0xff701080, 2);
+    event = controller_result(run, CLOCK_MODEL, false, "unsupported_clock_deadline");
+    g_assert_false(qdict_get_bool(event, "busy"));
+    g_assert_false(qdict_get_bool(event, "command_known"));
+    qobject_unref(event);
+    qtest_quit(q);
+    device_fault("bootstrap-controller-exploration", "zero-ports-v1", CLOCK_MODEL,
+                 0xff701040, 0xe1c020f0, true, 8, UINT64_MAX, "unsupported_clock_access", false);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -894,5 +1114,9 @@ int main(int argc, char **argv)
     qtest_add_func("/xt4/budget/faults", budget_strict_faults);
     qtest_add_func("/xt4/budget/pause-reset-idle-warp", budget_pause_reset_idle_warp);
     qtest_add_func("/xt4/budget/timer-order", budget_timer_order);
+    qtest_add_func("/xt4/controller/transfer-globals", transfer_globals);
+    qtest_add_func("/xt4/controller/transfer-invalid", transfer_invalid);
+    qtest_add_func("/xt4/controller/clock-lifecycle", clock_apply_lifecycle);
+    qtest_add_func("/xt4/controller/clock-invalid", clock_invalid);
     return g_test_run();
 }

@@ -5,6 +5,8 @@
 #include "hw/core/boards.h"
 #include "hw/gpio/xt4-ports.h"
 #include "hw/timer/xt4-timer.h"
+#include "hw/dma/xt4-transfer.h"
+#include "hw/misc/xt4-clock-apply.h"
 #include "target/arm/cpu.h"
 #include "system/memory.h"
 #include "system/runstate.h"
@@ -39,10 +41,14 @@ struct XT4State {
     XT4CPU *cpu;
     XT4PortsState *ports;
     XT4TimerState *timer;
+    XT4TransferState *transfer;
+    XT4ClockApplyState *clock_apply;
     const char *pending_device, *pending_detail;
     char *run_dir;
     char *scenario_id, *scenario_sha256;
     uint32_t port_inputs[16];
+    uint32_t transfer_globals[16];
+    uint64_t clock_apply_latency_ns;
     const XT4ProfileDefinition *profile;
     MemoryRegion ram[6], unknown;
     uint8_t *images[6];

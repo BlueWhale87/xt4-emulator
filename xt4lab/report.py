@@ -24,9 +24,10 @@ def write_report(run_dir: Path) -> Path:
     if fast and (type(info['budget']) is not int or not 1 <= info['budget'] <= 1000000000):
         raise ValueError('Invalid report execution budget')
     scenario = info['profile'].get('scenario')
-    if info['profile']['name'] in ('bootstrap-input-exploration', 'bootstrap-timer-exploration'):
+    if info['profile']['name'] in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration'):
         decoded = scenario_from_dict(scenario,
-            timer=info['profile']['name'] == 'bootstrap-timer-exploration')
+            timer=info['profile']['name'] != 'bootstrap-input-exploration',
+            platform=info['profile']['name'] == 'bootstrap-controller-exploration')
     else:
         if scenario is not None:
             raise ValueError('Synthetic scenario on a diagnostic report')
@@ -200,6 +201,11 @@ def write_report(run_dir: Path) -> Path:
                 'count preserved on enable, one virtual nanosecond per instruction.** '
                 'Debugger pauses do not advance this timer. First terminal count stops; '
                 'zero/underflow, reload, IRQ and WFI wake behavior remain unknown.']
+        if decoded.platform is not None:
+            lines += ['Platform assumptions: **explicit synthetic transfer-global words; '
+                'a one-nanosecond clock-selection apply latch.** These initial words and latency '
+                'are declared model choices. The logical latch does not change CPU/timer frequency. '
+                'Transfer status, DMA, interrupts and physical reset/ready timing remain unmodeled.']
     lines += ['', '## Assumptions', '', *('- '+a for a in summary['assumptions']), '',
         '## Reproducibility', '', f"- Original DAT SHA256: `{summary['original_sha256']}`",
         f"- Engine SHA256: `{summary['engine_sha256']}`",

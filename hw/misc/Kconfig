@@ -258,3 +258,6 @@ config XLNX_ZYNQ_DDRC
     bool
 
 source macio/Kconfig
+
+config FUJIFILM_XT4_CLOCK_APPLY
+    bool

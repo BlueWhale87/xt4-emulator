@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import stat
 from .startup import ORIGINAL_SHA256, BOOTSTRAP_OFFSET, extract_bootstrap
-from .scenarios import ExplorationScenario, load_scenario, scenario_sha256, validate_scenario
+from .scenarios import ExplorationScenario, load_scenario, scenario_dict, scenario_sha256, validate_scenario
 
 REPO = Path(__file__).resolve().parents[1]
 PROJECT = REPO.parents[1]
@@ -52,7 +52,8 @@ def load_profile(name: str, *, scenario_name: str | None = None) -> BootProfile:
                 'bootstrap-entry-diagnostic': 'xt4-212-bootstrap.json',
                 'bootstrap-port-config-diagnostic': 'xt4-212-ports.json',
                 'bootstrap-input-exploration': 'xt4-212-inputs.json',
-                'bootstrap-timer-exploration': 'xt4-212-timer.json'}
+                'bootstrap-timer-exploration': 'xt4-212-timer.json',
+                'bootstrap-controller-exploration': 'xt4-212-controller.json'}
     if name not in profiles:
         raise ValueError('Unsupported profile')
     data = json.loads(Path(__file__).with_name('profiles').joinpath(profiles[name]).read_text())
@@ -60,10 +61,11 @@ def load_profile(name: str, *, scenario_name: str | None = None) -> BootProfile:
     data['regions'] = tuple(Region(**r) for r in data['regions'])
     data['assumptions'] = tuple(data['assumptions'])
     data['models'] = tuple(data.get('models', ()))
-    if name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration'):
+    if name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration'):
         if scenario_name is None:
             raise ValueError('Exploration requires an explicit synthetic scenario')
-        data['scenario'] = load_scenario(scenario_name, timer=name == 'bootstrap-timer-exploration')
+        data['scenario'] = load_scenario(scenario_name, timer=name != 'bootstrap-input-exploration',
+                                         platform=name == 'bootstrap-controller-exploration')
     elif scenario_name is not None:
         raise ValueError('Synthetic scenario is not allowed on this profile')
     profile = BootProfile(**data)
@@ -76,11 +78,15 @@ def validate_profile(profile: BootProfile) -> None:
                        'bootstrap-port-config-diagnostic': ('xt4-port-config-v1',),
                        'bootstrap-input-exploration': ('xt4-port-config-v1', 'xt4-static-port-input-v1'),
                        'bootstrap-timer-exploration': ('xt4-port-config-v1', 'xt4-static-port-input-v1',
-                                                       'xt4-timer-exploration-v1')}
+                                                       'xt4-timer-exploration-v1'),
+                       'bootstrap-controller-exploration': ('xt4-port-config-v1', 'xt4-static-port-input-v1',
+                           'xt4-timer-exploration-v1', 'xt4-transfer-enable-exploration-v1',
+                           'xt4-clock-apply-exploration-v1')}
     if profile.name not in expected_models or profile.models != expected_models[profile.name]:
         raise ValueError('Unsupported profile model set')
-    if profile.name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration'):
-        validate_scenario(profile.scenario, timer=profile.name == 'bootstrap-timer-exploration')
+    if profile.name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration'):
+        validate_scenario(profile.scenario, timer=profile.name != 'bootstrap-input-exploration',
+                          platform=profile.name == 'bootstrap-controller-exploration')
     elif profile.scenario is not None:
         raise ValueError('Scenario is not allowed on a diagnostic profile')
     extents = []
@@ -127,7 +133,7 @@ def read_regular(root: Path, relative: str) -> bytes:
 
 
 def profile_dict(profile: BootProfile) -> dict:
-    return {'schema_version': 1, **asdict(profile)}
+    return {'schema_version': 1, **asdict(profile), 'scenario': scenario_dict(profile.scenario)}
 
 
 def verify_prepared(run: PreparedRun) -> None:
