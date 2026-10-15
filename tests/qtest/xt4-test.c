@@ -3,6 +3,7 @@
 #include "libqtest.h"
 #include "qobject/qdict.h"
 #include "qobject/qjson.h"
+#include "qobject/qnum.h"
 
 #define ENTRY 0x012910c4
 #define SENTINEL 0x01022000
@@ -305,6 +306,16 @@ static uint32_t mov_half(int reg, uint16_t value, bool upper)
            ((value & 0xf000) << 4) | (reg << 12) | (value & 0xfff);
 }
 
+static void assert_unsigned_value(QDict *record, uint64_t expected)
+{
+    QNum *number = qobject_to(QNum, qdict_get(record, "value"));
+    uint64_t actual;
+
+    g_assert_nonnull(number);
+    g_assert_true(qnum_get_try_uint(number, &actual));
+    g_assert_cmphex(actual, ==, expected);
+}
+
 static void port_fault(uint32_t address, uint32_t op, bool write,
                        unsigned width, uint64_t value, const char *detail,
                        bool preinitialize)
@@ -320,8 +331,8 @@ static void port_fault(uint32_t address, uint32_t op, bool write,
     uint32_t code[] = {
         mov_half(0, address, false), mov_half(0, address >> 16, true),
         mov_half(1, 1, false), mov_half(1, 1, true),
-        mov_half(2, 0x7788, false), mov_half(2, 0x5566, true),
-        mov_half(3, 0x3344, false), mov_half(3, 0x1122, true),
+        mov_half(2, value, false), mov_half(2, value >> 16, true),
+        mov_half(3, value >> 32, false), mov_half(3, value >> 48, true),
         mov_half(4, 0xa000, false), mov_half(4, 1, true),
         op, 0xe5841000, 0xeafffffe,
     };
@@ -346,13 +357,19 @@ static void port_fault(uint32_t address, uint32_t op, bool write,
         g_assert_cmpuint(qdict_get_int(stop, "width"), ==, width);
         g_assert_cmpstr(qdict_get_str(stop, "access"), ==, write ? "write" : "read");
         if (write) {
-            g_assert_cmphex(qdict_get_int(stop, "value"), ==, value);
+            assert_unsigned_value(stop, value);
         } else {
             g_assert_cmpint(qobject_type(qdict_get(stop, "value")), ==, QTYPE_QNULL);
         }
         if (detail) {
             g_assert_cmpstr(qdict_get_str(stop, "device"), ==, "xt4-port-config-v1");
             g_assert_cmpstr(qdict_get_str(stop, "detail"), ==, detail);
+            if (write) {
+                QDict *event = port_record(run);
+                g_assert_false(qdict_get_bool(event, "success"));
+                assert_unsigned_value(event, value);
+                qobject_unref(event);
+            }
         } else {
             g_assert_false(qdict_haskey(stop, "device"));
         }
@@ -407,6 +424,22 @@ static void port_invalid_operations(void)
     qtest_quit(q);
 }
 
+static void port_unsigned_fault_values(void)
+{
+    const uint64_t values[] = {
+        UINT64_C(0x8000000000000000),
+        UINT64_C(0xfedcba9876543210),
+        UINT64_MAX,
+    };
+
+    for (int i = 0; i < G_N_ELEMENTS(values); i++) {
+        port_fault(0xfff41018, 0xe1c020f0, true, 8, values[i],
+                   "unsupported_port_access", false);
+        port_fault(0xfff41500, 0xe1c020f0, true, 8, values[i],
+                   "unsupported_port_access", false);
+    }
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -425,5 +458,6 @@ int main(int argc, char **argv)
     qtest_add_func("/xt4/ports/reset", port_reset);
     qtest_add_func("/xt4/ports/unknown-reads", port_unknown_reads);
     qtest_add_func("/xt4/ports/invalid", port_invalid_operations);
+    qtest_add_func("/xt4/ports/unsigned-fault-values", port_unsigned_fault_values);
     return g_test_run();
 }

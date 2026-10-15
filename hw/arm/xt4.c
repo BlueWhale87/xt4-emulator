@@ -10,6 +10,7 @@
 #include "qobject/qdict.h"
 #include "qobject/qlist.h"
 #include "qobject/qjson.h"
+#include "qobject/qnum.h"
 #include "qobject/qstring.h"
 #include "system/reset.h"
 #include "system/address-spaces.h"
@@ -127,7 +128,7 @@ void xt4_record_stop(XT4State *s, CPUState *cs, const XT4Stop *stop)
         qdict_put_null(event, "physical_address");
     }
     if (stop->has_value) {
-        qdict_put_int(event, "value", stop->value);
+        qdict_put(event, "value", qnum_from_uint(stop->value));
     } else {
         qdict_put_null(event, "value");
     }
@@ -161,7 +162,7 @@ static void port_event(void *opaque, const XT4PortEvent *access)
     qdict_put_int(event, "selector", access->selector);
     qdict_put_bool(event, "success", access->success);
     if (access->write || access->success) {
-        qdict_put_int(event, "value", access->value);
+        qdict_put(event, "value", qnum_from_uint(access->value));
     } else {
         qdict_put_null(event, "value");
     }
