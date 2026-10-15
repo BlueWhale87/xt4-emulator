@@ -20,3 +20,6 @@ GTAGS
 *.swp
 *.patch
 *.gcov
+# X-T4 local laboratory outputs
+/runs/
+__pycache__/
