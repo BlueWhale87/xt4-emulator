@@ -1,0 +1,7 @@
+build/
+runs/
+.tools/
+__pycache__/
+.DS_Store
+
+!reference/*.patch

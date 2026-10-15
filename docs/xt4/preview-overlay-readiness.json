@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "scope": "Bounded bench readiness and isolated original-getter probe; not integrated live preview",
+  "firmware_sha256": "853d273b5603d3a2b93493f0ebd6a762b0b4b6bdc70317777775ae5f8ed93bc5",
+  "analysis_elf_sha256": "2de7f18409a5a4a96f5da2b3b4e76022f81040f3ba573146bb62922f31c08249",
+  "bench_source_commit": "924be63b55ad37c2d808477d5589af43ab0a63b1",
+  "startup_observations": {
+    "flash": {
+      "profile": "bootstrap-flash-exploration",
+      "stop": {
+        "reason": "unsupported_access",
+        "completed_steps": 0,
+        "attempted_steps": 0,
+        "segment": 0,
+        "engine_instruction_count": 23565,
+        "detail": "unsupported_flash_config",
+        "device": "xt4-cadence-stig-exploration-v1",
+        "virtual_address": 4294803456,
+        "exception": 0,
+        "core": 0,
+        "width": 4,
+        "pc": 20276,
+        "physical_address": 4294803456,
+        "value": 3238002889,
+        "architectural_pc": 20276,
+        "access": "write"
+      },
+      "engine_sha256": "f4303b0e49847bb43112a86f1c7d5fa016152e4127369069d935c59445fcdeae",
+      "engine_source_commit": "924be63b55ad37c2d808477d5589af43ab0a63b1",
+      "stop_record_sha256": "db5bdf8b47931987315b39c941be99f5e18f615c5e15397863d7b65e04772fc1"
+    },
+    "module": {
+      "profile": "module-entry-diagnostic",
+      "stop": {
+        "reason": "unsupported_access",
+        "completed_steps": 8,
+        "attempted_steps": 9,
+        "segment": 0,
+        "virtual_address": 14811144,
+        "exception": 0,
+        "core": 0,
+        "width": 1,
+        "pc": 19468324,
+        "physical_address": 14811144,
+        "value": null,
+        "architectural_pc": 19468324,
+        "access": "read"
+      },
+      "engine_sha256": "f4303b0e49847bb43112a86f1c7d5fa016152e4127369069d935c59445fcdeae",
+      "engine_source_commit": "924be63b55ad37c2d808477d5589af43ab0a63b1",
+      "stop_record_sha256": "016b6166da46e4e3b7465475c10bf62282ae88c52f9aaddc07a0335133f180fc"
+    }
+  },
+  "picture_getter_probe": {
+    "scope": "Original PIC getter instructions with a synthetic caller/context/stack; not a live camera frame or preview hook",
+    "function": "0x122c6a0",
+    "all_bindings_enabled": false,
+    "cases": [
+      {
+        "layer": 0,
+        "returned": true,
+        "instructions": 11,
+        "r0": "0x0",
+        "output_word": "0x12345678",
+        "expected_status": "0x0",
+        "context_unchanged": true,
+        "status": "passed",
+        "trace_sha256": "a34586ef793c3da2f88a45cd3c0a0630ae616e9757fe96a58e400b95d585b79f"
+      },
+      {
+        "layer": 1,
+        "returned": true,
+        "instructions": 11,
+        "r0": "0x0",
+        "output_word": "0xabcdef00",
+        "expected_status": "0x0",
+        "context_unchanged": true,
+        "status": "passed",
+        "trace_sha256": "88dd9deb6b02ee794ebbc3b28df9e7d0e7727617210f0797c6f4a215d12162fb"
+      },
+      {
+        "layer": 2,
+        "returned": true,
+        "instructions": 11,
+        "r0": "0xffffffe2",
+        "output_word": "0xdeadbeef",
+        "expected_status": "0xffffffe2",
+        "context_unchanged": true,
+        "status": "passed",
+        "trace_sha256": "f17d74da7bd0654ceea4160577ae076a2f4da3f86a8859be5b665ac176dea9b1"
+      },
+      {
+        "layer": 4294967295,
+        "returned": true,
+        "instructions": 11,
+        "r0": "0xffffffe2",
+        "output_word": "0xdeadbeef",
+        "expected_status": "0xffffffe2",
+        "context_unchanged": true,
+        "status": "passed",
+        "trace_sha256": "b4ce1ba8547e9b7a794969b42a23982faf7119549e9182ccdd5d23f795760664"
+      }
+    ],
+    "function_code_sha256": "04b1a9b12359dcc09011ab27dfecaaf4b17d3a3029f8c3463574676afbb275e2",
+    "static_evidence_id": "ev_fd0d146f10412aa45e3851eb95cc06f18edb689a6eabc543cd499083f05c9818"
+  },
+  "overlay_static_observation": {
+    "render_evidence_id": "ev_099e3b6019cc74f03577662347612629f699456a71189bf1678456cb9b4791f2",
+    "update_evidence_id": "ev_591b61b56313d30999bf27e8350de16cec2a63a76eac46bf73d88f3a4b6e55e5",
+    "pre_flush_observation_pc": "0x124690c",
+    "runtime_reached": false,
+    "binding_enabled": false
+  },
+  "validated": [
+    "PIC getter leaf returns selected field in a synthetic context",
+    "Invalid layer rejection leaves output sentinel unchanged",
+    "Caller context remains unchanged",
+    "Both startup routes stop before UI/preview"
+  ],
+  "not_validated": [
+    "Normal caller/task/ABI",
+    "Active preview format, stride, dimensions or lifetime",
+    "Cache coherency or frame completion",
+    "Graphics context and state restoration",
+    "Image-to-display transforms",
+    "Integrated inference/overlay or real X-T4 performance"
+  ]
+}

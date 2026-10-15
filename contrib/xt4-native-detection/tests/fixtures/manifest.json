@@ -1,0 +1,89 @@
+{
+  "source_sha256": "88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5",
+  "source_dimensions": [
+    512,
+    512
+  ],
+  "generation": {
+    "resize": "OpenCV INTER_LINEAR",
+    "translation": [
+      15,
+      8
+    ],
+    "darkening": 0.6,
+    "crop_xywh": [
+      165,
+      40,
+      125,
+      150
+    ],
+    "crowd": "2x2 80-pixel crops",
+    "non_square": "top 300 source rows resized to 160x94, y=33"
+  },
+  "tools": {
+    "opencv": "4.11.0",
+    "numpy": "2.2.6"
+  },
+  "fixtures": [
+    {
+      "name": "astronaut",
+      "width": 160,
+      "height": 160,
+      "stride": 480,
+      "bytes": 76800,
+      "sha256": "36be9b24f8cddb757284b077f8ffdd554f53f4e2ada4cab07152acf340531f3a",
+      "reference_boxes": 1,
+      "reference_sha256": "1824fd752057ed523bf7d03c9a72ba3b31fc79e8629054f7a6c52898940f260b"
+    },
+    {
+      "name": "blank",
+      "width": 160,
+      "height": 160,
+      "stride": 480,
+      "bytes": 76800,
+      "sha256": "e2cc2a1fa6131cf4d86faa3baf78851f35a36853e2467c257b3df9d89e85cce5",
+      "reference_boxes": 0,
+      "reference_sha256": "577785e502d36a399e968e0478e66be2c96588ebe269140c55fb55f9ad7a62a0"
+    },
+    {
+      "name": "translated",
+      "width": 160,
+      "height": 160,
+      "stride": 480,
+      "bytes": 76800,
+      "sha256": "40416664cd439559aba4b4b14754755a91446138158bfdbb843930b8fd3f1f8f",
+      "reference_boxes": 1,
+      "reference_sha256": "cb212ab8d4002ff534600ede7fa45a533d80f25db0e4378215c6132d4aae5f82"
+    },
+    {
+      "name": "darkened",
+      "width": 160,
+      "height": 160,
+      "stride": 480,
+      "bytes": 76800,
+      "sha256": "04d8b24dd8ccc8d0a4483402d9efb6ec3a75224aa75298d3e5235e1f90193550",
+      "reference_boxes": 1,
+      "reference_sha256": "948e854878594055226720b460794f0e6197478692628895e82c4fddd43ac9a6"
+    },
+    {
+      "name": "non-square",
+      "width": 160,
+      "height": 160,
+      "stride": 480,
+      "bytes": 76800,
+      "sha256": "79531e9b4324d64f5cf93eee0bc7f449d6fa7569d1b96bc940845f2ad52f8765",
+      "reference_boxes": 1,
+      "reference_sha256": "880d5661518e38c3aa98b328735c13e2d2537ad67c46cb62b5fd995e99f8df0c"
+    },
+    {
+      "name": "crowd",
+      "width": 160,
+      "height": 160,
+      "stride": 480,
+      "bytes": 76800,
+      "sha256": "4cf2ada7371cfcb8841675fc406be40e5362a48bd8e4c0d7a406fa5590a45b09",
+      "reference_boxes": 4,
+      "reference_sha256": "02e4084f92e95fa93cfb7ece38492197ae2bc3e01b236e76b111b0daddfd7733"
+    }
+  ]
+}

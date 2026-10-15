@@ -1,0 +1,30 @@
+name: X-T4 native detector
+on:
+  pull_request:
+    paths:
+      - 'contrib/xt4-native-detection/**'
+      - 'scripts/test-xt4-native.py'
+      - '.github/workflows/xt4-native.yml'
+  push:
+    paths:
+      - 'contrib/xt4-native-detection/**'
+      - 'scripts/test-xt4-native.py'
+      - '.github/workflows/xt4-native.yml'
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install build tools on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build
+      - name: Install build tools on macOS
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+      - name: Build and test native detector
+        run: python3 scripts/test-xt4-native.py

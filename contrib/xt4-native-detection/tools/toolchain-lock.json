@@ -1,0 +1,22 @@
+{
+  "source_url": "https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-darwin-arm64-arm-none-eabi.pkg",
+  "package_sha256": "396aacf7bb81126fed0de66f17e2d0009de373b667abbcc7855afab43628224f",
+  "signature": "Package \"arm-gnu-15.2.rel1.pkg\":\n   Status: signed by a developer certificate issued by Apple for distribution\n   Notarization: trusted by the Apple notary service\n   Signed with a trusted timestamp on: 2025-12-10 15:27:35 +0000\n   Certificate Chain:\n    1. Developer ID Installer: ARM Ltd (S345482SL3)\n       Expires: 2028-04-12 12:25:14 +0000\n       SHA256 Fingerprint:\n           3B CE 07 F9 51 E9 25 51 24 82 28 72 CC 63 18 F5 D5 FC AA 56 A7 4B \n           A8 3B AF 28 78 E7 59 D1 E1 9D\n       ------------------------------------------------------------------------\n    2. Developer ID Certification Authority\n       Expires: 2031-09-17 00:00:00 +0000\n       SHA256 Fingerprint:\n           F1 6C D3 C5 4C 7F 83 CE A4 BF 1A 3E 6A 08 19 C8 AA A8 E4 A1 52 8F \n           D1 44 71 5F 35 06 43 D2 DF 3A\n       ------------------------------------------------------------------------\n    3. Apple Root CA\n       Expires: 2035-02-09 21:40:36 +0000\n       SHA256 Fingerprint:\n           B0 B1 73 0E CB C7 FF 45 05 14 2C 49 F1 29 5E 6E DA 6B CA ED 7E 2C \n           68 C5 BE 91 B5 A1 10 01 F0 24\n\n",
+  "compiler_version": "arm-none-eabi-g++ (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+  "target": "arm-none-eabi",
+  "flags": [
+    "-march=armv7-a",
+    "-marm",
+    "-mfloat-abi=soft"
+  ],
+  "libraries": {
+    "arm-none-eabi/lib/thumb/v7-a/nofp/libm.a": {
+      "sha256": "19acbc18c31f00e9b59968391853d5462aa900e50cf4013f1a404e3218106813",
+      "bytes": 567262
+    },
+    "lib/gcc/arm-none-eabi/15.2.1/thumb/v7-a/nofp/libgcc.a": {
+      "sha256": "5e061f707802aae2a087e3f7fa9db620ce9106685a5810f12fa3442db0b0309e",
+      "bytes": 1639868
+    }
+  }
+}
