@@ -5,10 +5,10 @@ import json
 import os
 from pathlib import Path
 import stat
+from .startup import ORIGINAL_SHA256, BOOTSTRAP_OFFSET, extract_bootstrap
 
 REPO = Path(__file__).resolve().parents[1]
 PROJECT = REPO.parents[1]
-ORIGINAL_SHA256 = '853d273b5603d3a2b93493f0ebd6a762b0b4b6bdc70317777775ae5f8ed93bc5'
 SOURCE_FILES = ('unpacked/segment-260274.bin', 'unpacked/segment-5c0274.bin',
                 'unpacked/segment-ae0274.bin')
 
@@ -45,9 +45,11 @@ class PreparedRun:
 def load_profile(name: str) -> BootProfile:
     if name == 'validation':
         raise ValueError('missing_boot_state: loader-created CPU state is not recovered')
-    if name != 'module-entry-diagnostic':
+    profiles = {'module-entry-diagnostic': 'xt4-212.json',
+                'bootstrap-entry-diagnostic': 'xt4-212-bootstrap.json'}
+    if name not in profiles:
         raise ValueError('Unsupported profile')
-    data = json.loads(Path(__file__).with_name('profiles').joinpath('xt4-212.json').read_text())
+    data = json.loads(Path(__file__).with_name('profiles').joinpath(profiles[name]).read_text())
     data.pop('schema_version')
     data['regions'] = tuple(Region(**r) for r in data['regions'])
     data['assumptions'] = tuple(data['assumptions'])
@@ -128,8 +130,19 @@ def prepare_run(research_root: Path, run_root: Path, profile_name: str) -> Prepa
     if len(original) != 51278280 or hashlib.sha256(original).hexdigest() != ORIGINAL_SHA256:
         raise ValueError('Original DAT fingerprint mismatch')
     images = []
-    for r, source in zip((r for r in profile.regions if r.file), SOURCE_FILES):
-        data = read_regular(research_root, source)
+    sources = dict(zip(('primary', 'secondary', 'wireless'), SOURCE_FILES))
+    used_sources = []
+    derived = {}
+    for r in (r for r in profile.regions if r.file):
+        if r.name == 'bootstrap':
+            data = extract_bootstrap(original)
+            used_sources.append('FWUP0024.DAT')
+            derived[r.name] = {'original_dat_offset': BOOTSTRAP_OFFSET,
+                               'transform': 'xor-ff', 'sha256': r.sha256}
+        else:
+            source = sources[r.name]
+            data = read_regular(research_root, source)
+            used_sources.append(source)
         if len(data) != r.file_size or hashlib.sha256(data).hexdigest() != r.sha256:
             raise ValueError('Decoded image fingerprint mismatch: ' + r.name)
         images.append((r, data))
@@ -142,8 +155,10 @@ def prepare_run(research_root: Path, run_root: Path, profile_name: str) -> Prepa
             stream.write(data)
         path.chmod(0o400)
     manifest = {'schema_version': 1, 'original_sha256': ORIGINAL_SHA256,
-                'research_root': str(research_root), 'source_files': SOURCE_FILES,
+                'research_root': str(research_root), 'source_files': tuple(used_sources),
                 'profile_sha256': hashlib.sha256(json.dumps(profile_dict(profile), sort_keys=True).encode()).hexdigest()}
+    if derived:
+        manifest['derived_images'] = derived
     (run_root / 'profile.json').write_text(json.dumps(profile_dict(profile), indent=2) + '\n')
     (run_root / 'provenance.json').write_text(json.dumps(manifest, indent=2) + '\n')
     run = PreparedRun(run_root, profile, manifest)
