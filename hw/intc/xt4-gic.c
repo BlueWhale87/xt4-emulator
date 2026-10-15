@@ -157,7 +157,13 @@ static void realize(DeviceState *dev, Error **errp)
 }
 static void reset(Object *obj, ResetType type)
 {
-    device_cold_reset(DEVICE(&XT4_GIC(obj)->gic));
+    XT4GicState *s = XT4_GIC(obj);
+
+    device_cold_reset(DEVICE(&s->gic));
+    /* The pinned backend leaves active priorities and its output untouched. */
+    memset(s->gic.apr, 0, sizeof(s->gic.apr));
+    memset(s->gic.nsapr, 0, sizeof(s->gic.nsapr));
+    irq_changed(s, 0, 0);
 }
 static void init(Object *obj)
 {

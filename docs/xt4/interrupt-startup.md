@@ -20,4 +20,6 @@ Only aligned32-bit accesses in the adapter's documented register subset are supp
 
 The CPU observer delegates modeled IRQ entry to the inherited Arm implementation in this profile. An anonymous diagnostic guest verifies an actual IRQ vector, IAR read, EOI write and architectural return to the interrupted mainline. That test does not claim the original bootstrap has taken an IRQ: its observed path initializes the distributor, sets the priority mask and broadcasts to absent peers. Other architectural exceptions remain strict stops. Tests also cover pending/active acknowledgement, spurious acknowledgement, all-other target filtering, reset and bounded continuation.
 
+Same-process system-reset tests cover an asserted interrupt line and an acknowledged interrupt awaiting EOI. The adapter clears the pinned backend's retained active-priority bookkeeping and lowers its output during reset. A subsequent lower-priority interrupt can be acknowledged normally; restarting the engine alone would not exercise this case.
+
 No camera connection, physical storage or network backend is present. Next work is the evidenced context-copy and loader dependency, followed by required multicore, storage, display and input support.

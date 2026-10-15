@@ -1771,11 +1771,73 @@ static void calibration_missing_and_coverage(void)
     qtest_quit(q);
 }
 
+static bool gic_last_irq_level(const char *run)
+{
+    g_autofree char *path = g_build_filename(run, "engine-events.jsonl", NULL);
+    g_autofree char *text = NULL;
+    g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
+    g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+    bool level = false;
+    for (unsigned i = 0; lines[i] && *lines[i]; i++) {
+        g_autoptr(QDict) event = qobject_to(QDict, qobject_from_json(lines[i], NULL));
+        if (!g_strcmp0(qdict_get_try_str(event, "operation"), "irq-level")) {
+            level = qdict_get_bool(event, "irq_level");
+        }
+    }
+    return level;
+}
+
+static void gic_enable(QTestState *q)
+{
+    qtest_writel(q, 0xf8f01000, 1);
+    qtest_writel(q, 0xf8f02004, 255);
+    qtest_writel(q, 0xf8f02000, 1);
+}
+
+static void gic_warm_reset_line(void)
+{
+    g_autofree char *run = new_fixture_scenario("bootstrap-gic-exploration", "zero-ports-v1");
+    QTestState *q = start(run, false);
+    gic_enable(q);
+    qtest_writel(q, 0xf8f01f00, 0x02000001);
+    g_assert_true(gic_last_irq_level(run));
+    qtest_system_reset(q);
+    g_assert_false(gic_last_irq_level(run));
+    g_assert_cmpuint(qtest_readl(q, 0xf8f0200c), ==, 1023);
+    gic_enable(q);
+    qtest_writel(q, 0xf8f01f00, 0x02000002);
+    g_assert_cmpuint(qtest_readl(q, 0xf8f0200c), ==, 2);
+    qtest_quit(q);
+}
+
+static void gic_warm_reset_active_priority(void)
+{
+    g_autofree char *run = new_fixture_scenario("bootstrap-gic-exploration", "zero-ports-v1");
+    QTestState *q = start(run, false);
+    gic_enable(q);
+    qtest_writel(q, 0xf8f01400, 0x00008000);
+    qtest_writel(q, 0xf8f01f00, 0x02000001);
+    g_assert_cmpuint(qtest_readl(q, 0xf8f0200c), ==, 1);
+    g_assert_cmpuint(qtest_readl(q, 0xf8f02014), ==, 0x80);
+    qtest_system_reset(q); /* Same process, before the old IRQ's EOI. */
+    gic_enable(q);
+    qtest_writel(q, 0xf8f01400, 0x00c04000);
+    qtest_writel(q, 0xf8f01f00, 0x02000001);
+    g_assert_cmpuint(qtest_readl(q, 0xf8f0200c), ==, 1);
+    qtest_writel(q, 0xf8f02010, 1);
+    g_assert_cmpuint(qtest_readl(q, 0xf8f02014), ==, 255);
+    qtest_writel(q, 0xf8f01f00, 0x02000002);
+    g_assert_cmpuint(qtest_readl(q, 0xf8f0200c), ==, 2);
+    qtest_quit(q);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
     qtest_add_func("/xt4/memory-reset", test_xt4_memory_and_reset);
     qtest_add_func("/xt4/bootstrap-memory-reset", test_xt4_bootstrap_memory_reset);
+    qtest_add_func("/xt4/gic/warm-reset-line", gic_warm_reset_line);
+    qtest_add_func("/xt4/gic/warm-reset-active-priority", gic_warm_reset_active_priority);
     qtest_add_func("/xt4/fault/read", read_fault);
     qtest_add_func("/xt4/fault/write", write_fault);
     qtest_add_func("/xt4/fault/fetch", fetch_fault);
