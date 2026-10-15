@@ -41,6 +41,19 @@ class PhyScenario:
 
 
 @dataclass(frozen=True)
+class TransferScenario:
+    route_policy: str = 'request2a-channel1-v1'
+    initial_status_word: int = 0
+    initial_indirect_control: int = 0
+    transfer_latency_ns: int = 64
+    source_policy: str = 'f0-covered-span-v1'
+    sample_policy: str = 'ideal-taps0-127-phases20-21-v1'
+    status_policy: str = 'request-active-bit16-v1'
+    terminal_address_policy: str = 'retain-programmed-v1'
+    cbar_base: int = 0xf8f00000
+
+
+@dataclass(frozen=True)
 class ExplorationScenario:
     scenario_id: str
     port_inputs: tuple[int, ...]
@@ -48,20 +61,21 @@ class ExplorationScenario:
     platform: PlatformScenario | None = None
     flash: FlashScenario | None = None
     phy: PhyScenario | None = None
+    transfer: TransferScenario | None = None
 
 
-def load_scenario(name: str, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False) -> ExplorationScenario:
+def load_scenario(name: str, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False, transfer: bool = False) -> ExplorationScenario:
     if name not in ('zero-ports-v1', 'one-ports-v1'):
         raise ValueError('Unsupported synthetic scenario')
     return ExplorationScenario(name, (0 if name == 'zero-ports-v1' else 0xffffffff,) * 16,
         TimerScenario(54000000, True, True, 0, True) if timer else None,
-        PlatformScenario((0 if name == 'zero-ports-v1' else 0xffffffff,) * 16, 1) if platform else None, FlashScenario() if flash else None, PhyScenario() if phy else None)
+        PlatformScenario((0 if name == 'zero-ports-v1' else 0xffffffff,) * 16, 1) if platform else None, FlashScenario() if flash else None, PhyScenario() if phy else None, TransferScenario() if transfer else None)
 
 
-def validate_scenario(scenario: ExplorationScenario, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False) -> None:
+def validate_scenario(scenario: ExplorationScenario, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False, transfer: bool = False) -> None:
     if not isinstance(scenario, ExplorationScenario):
         raise ValueError('Explicit synthetic scenario required')
-    expected = load_scenario(scenario.scenario_id, timer=timer, platform=platform, flash=flash, phy=phy)
+    expected = load_scenario(scenario.scenario_id, timer=timer, platform=platform, flash=flash, phy=phy, transfer=transfer)
     if (type(scenario.port_inputs) is not tuple or len(scenario.port_inputs) != 16
             or any(type(v) is not int or not 0 <= v <= 0xffffffff for v in scenario.port_inputs)
             or scenario != expected):
@@ -94,6 +108,13 @@ def validate_scenario(scenario: ExplorationScenario, *, timer: bool, platform: b
             if type(value) is not type(getattr(expected.phy, key)):
                 raise ValueError('Invalid PHY field type')
 
+    if transfer:
+        if not isinstance(scenario.transfer, TransferScenario):
+            raise ValueError('Invalid transfer contract')
+        for key, value in asdict(scenario.transfer).items():
+            if type(value) is not type(getattr(expected.transfer, key)):
+                raise ValueError('Invalid transfer field type')
+
 
 def scenario_dict(scenario: ExplorationScenario | None) -> dict | None:
     if scenario is None:
@@ -105,13 +126,15 @@ def scenario_dict(scenario: ExplorationScenario | None) -> dict | None:
         data.pop('flash')
     if scenario.phy is None:
         data.pop('phy')
+    if scenario.transfer is None:
+        data.pop('transfer')
     return json.loads(json.dumps(data))
 
 
-def scenario_from_dict(data: dict, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False) -> ExplorationScenario:
+def scenario_from_dict(data: dict, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False, transfer: bool = False) -> ExplorationScenario:
     if not isinstance(data, dict):
         raise ValueError('Missing synthetic scenario declaration')
-    expected = load_scenario(data.get('scenario_id'), timer=timer, platform=platform, flash=flash, phy=phy)
+    expected = load_scenario(data.get('scenario_id'), timer=timer, platform=platform, flash=flash, phy=phy, transfer=transfer)
     # Canonical JSON also distinguishes booleans/floats from integer words.
     if json.dumps(data, sort_keys=True, separators=(',', ':')) != json.dumps(
             scenario_dict(expected), sort_keys=True, separators=(',', ':')):

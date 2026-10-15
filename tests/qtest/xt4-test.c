@@ -1488,6 +1488,289 @@ static void phy_budget_pending(void)
     }
 }
 
+
+#define CAL_ROUTE UINT64_C(0xfff4a500)
+#define CAL_DMA UINT64_C(0xfffe1000)
+#define CAL_IND UINT64_C(0xfffd8060)
+#define CAL_DEST 0x1a000
+#define CAL_SOURCE 0xf002a080
+#define ROUTE_MODEL "xt4-request-route-exploration-v1"
+#define DMA_MODEL "xt4-dma-channel1-exploration-v1"
+#define IND_MODEL "xt4-indirect-read-exploration-v1"
+
+static QTestState *new_calibration(char **run)
+{
+    *run = new_fixture_scenario("bootstrap-calibration-exploration", "zero-ports-v1");
+    QTestState *q = start(*run, false);
+    qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+    return q;
+}
+
+static void cal_error(const char *run, const char *model, const char *detail)
+{
+    QDict *e = controller_result(run, model, false, detail);
+    qobject_unref(e);
+}
+
+static void cal_controller(QTestState *q)
+{
+    qtest_writel(q, FLASH_BASE, 0x800c1);
+    flash_launch(q, 0x06000000); qtest_clock_step(q, 64);
+    qtest_writel(q, FLASH_BASE + 0x94, 0);
+    qtest_writel(q, FLASH_BASE + 0xa8, 2);
+    flash_launch(q, 0x720b8000); qtest_clock_step(q, 104);
+    qtest_writel(q, FLASH_BASE, 0xc10080c9);
+    qtest_writel(q, FLASH_BASE + 4, 0x140333ee);
+    qtest_writel(q, FLASH_BASE + 0x10, 1);
+    qtest_writel(q, FLASH_BASE + 0x14, 0x101003);
+    qtest_writel(q, FLASH_BASE + 0x1c, CAL_SOURCE);
+    qtest_writel(q, FLASH_BASE + 0x20, 0x707);
+    qtest_writel(q, FLASH_BASE + 0x80, 0xf);
+    qtest_writel(q, FLASH_BASE + 0xe0, 0x11edfa00);
+    qtest_writel(q, FLASH_BASE + 0xf0, 0x10);
+    qtest_writel(q, PHY_BASE, 0);
+    qtest_writel(q, PHY_BASE + 4, 30);
+    qtest_writel(q, PHY_BASE, 0x40000000); qtest_clock_step(q, 4);
+    qtest_writel(q, PHY_BASE, 0xc01f0000); qtest_clock_step(q, 4);
+}
+
+static void cal_descriptor(QTestState *q)
+{
+    qtest_writel(q, CAL_ROUTE, 0x01002a2c);
+    qtest_writel(q, CAL_DMA, 0x10000000);
+    qtest_writel(q, CAL_DMA + 0x28, 0x00201011);
+    qtest_writel(q, CAL_DMA + 0x30, 0);
+    qtest_writel(q, CAL_DMA + 0x10, 0x7f);
+    qtest_writel(q, CAL_DMA + 0x14, CAL_SOURCE);
+    qtest_writel(q, CAL_DMA + 0x18, CAL_DEST);
+    qtest_writel(q, CAL_DMA + 0x1c, 0x30f04);
+    qtest_writel(q, CAL_DMA + 0x20, 0x30f00);
+    qtest_writel(q, CAL_DMA + 0x24, 0);
+    qtest_writel(q, CAL_DMA + 0x28, 0x10201011);
+    qtest_writel(q, CAL_IND + 4, 0);
+    qtest_writel(q, CAL_IND + 8, CAL_SOURCE);
+    qtest_writel(q, CAL_IND + 12, 128);
+}
+
+static unsigned cal_completions(const char *run)
+{
+    g_autofree char *path = g_build_filename(run, "engine-events.jsonl", NULL);
+    g_autofree char *text = NULL;
+    g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
+    g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+    unsigned count = 0;
+    for (int i = 0; lines[i] && *lines[i]; i++) {
+        QDict *e = qobject_to(QDict, qobject_from_json(lines[i], NULL));
+        if (!g_strcmp0(qdict_get_try_str(e, "event"), "device-transition") &&
+            !g_strcmp0(qdict_get_try_str(e, "device"), IND_MODEL) &&
+            qdict_get_bool(e, "success")) {
+            g_assert_cmpint(qobject_type(qdict_get(e, "width")), ==, QTYPE_QNULL);
+            g_assert_cmpint(qobject_type(qdict_get(e, "value")), ==, QTYPE_QNULL);
+            g_assert_cmpint(qdict_get_int(e, "source_length"), ==, 128);
+            g_assert_nonnull(qdict_get_try_str(e, "source_sha256"));
+            g_assert_cmpint(qdict_get_int(e, "virtual_ns") - qdict_get_int(e, "started_ns"), ==, 64);
+            count++;
+        }
+        qobject_unref(e);
+    }
+    return count;
+}
+
+static void cal_sentinel(QTestState *q)
+{
+    uint8_t value[128];
+    memset(value, 0xa5, sizeof(value));
+    qtest_memwrite(q, CAL_DEST, value, sizeof(value));
+}
+
+static void cal_unchanged(QTestState *q)
+{
+    uint8_t value[128], expected[128];
+    memset(expected, 0xa5, sizeof(expected));
+    qtest_memread(q, CAL_DEST, value, sizeof(value));
+    g_assert_cmpmem(value, sizeof(value), expected, sizeof(expected));
+}
+
+static void calibration_lifecycle(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_calibration(&run);
+    g_assert_cmphex(qtest_readl(q, CAL_DMA + 0x30), ==, 0);
+    g_assert_cmphex(qtest_readl(q, CAL_IND), ==, 0);
+    qtest_readl(q, CAL_ROUTE); cal_error(run, ROUTE_MODEL, "unknown_request_route");
+    cal_controller(q); cal_descriptor(q); cal_sentinel(q);
+    g_assert_cmphex(qtest_readl(q, CAL_DMA + 0x30), ==, 0);
+    qtest_writel(q, CAL_IND, 1);
+    g_assert_cmphex(qtest_readl(q, CAL_IND), ==, 1);
+    g_assert_cmphex(qtest_readl(q, CAL_DMA + 0x30), ==, 0x10000);
+    cal_unchanged(q); qtest_clock_step(q, 63); cal_unchanged(q);
+    g_assert_cmpuint(cal_completions(run), ==, 0);
+    qtest_writel(q, CAL_ROUTE, 0x01002c2c); cal_error(run, ROUTE_MODEL, "busy_calibration_transfer");
+    qtest_writel(q, CAL_DMA + 0x18, 0); cal_error(run, DMA_MODEL, "busy_calibration_transfer");
+    qtest_writel(q, CAL_IND, 0x20); cal_error(run, IND_MODEL, "busy_calibration_transfer");
+    qtest_writel(q, FLASH_BASE, 0x800c1); flash_error(run, "busy_calibration_transfer");
+    qtest_writel(q, FLASH_BASE + 0x90, 0x06000001); flash_error(run, "busy_calibration_transfer");
+    qtest_clock_step(q, 1);
+    g_assert_cmpuint(cal_completions(run), ==, 1);
+    g_assert_cmphex(qtest_readl(q, CAL_DMA + 0x30), ==, 0);
+    g_assert_cmphex(qtest_readl(q, CAL_DMA + 0x14), ==, CAL_SOURCE);
+    g_assert_cmphex(qtest_readl(q, CAL_DMA + 0x18), ==, CAL_DEST);
+    g_assert_cmphex(qtest_readl(q, CAL_IND), ==, 0x20);
+    g_autofree char *media = g_build_filename(run, "inputs", "calibration.bin", NULL);
+    g_autofree char *expected = NULL;
+    size_t length;
+    g_assert_true(g_file_get_contents(media, &expected, &length, NULL));
+    uint8_t value[128]; qtest_memread(q, CAL_DEST, value, sizeof(value));
+    g_assert_cmpuint(length, ==, sizeof(value));
+    g_assert_cmpmem(value, sizeof(value), expected, length);
+    qtest_writel(q, CAL_IND, 1); cal_error(run, IND_MODEL, "unacknowledged_indirect_done");
+    qtest_writel(q, CAL_IND, 0x20);
+    g_assert_cmphex(qtest_readl(q, CAL_IND), ==, 0);
+    cal_sentinel(q); qtest_writel(q, CAL_IND, 1); qtest_clock_step(q, 64);
+    g_assert_cmpuint(cal_completions(run), ==, 2);
+    qtest_memread(q, CAL_DEST, value, sizeof(value));
+    g_assert_cmpmem(value, sizeof(value), expected, length);
+    qtest_writel(q, CAL_IND, 0x20); qtest_writel(q, CAL_ROUTE, 0x01002c2c);
+    g_assert_cmphex(qtest_readl(q, CAL_ROUTE), ==, 0x01002c2c);
+    qtest_quit(q);
+}
+
+static void calibration_invalid(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_calibration(&run);
+    const uint64_t addresses[] = {CAL_ROUTE, CAL_DMA + 0x10, CAL_IND};
+    const char *models[] = {ROUTE_MODEL, DMA_MODEL, IND_MODEL};
+    for (unsigned i = 0; i < 3; i++) {
+        qtest_writeb(q, addresses[i], 1); cal_error(run, models[i], "unsupported_transfer_path_access");
+        qtest_writew(q, addresses[i], 1); cal_error(run, models[i], "unsupported_transfer_path_access");
+        qtest_writel(q, addresses[i] + 1, 1); cal_error(run, models[i], "unsupported_transfer_path_access");
+        qtest_writeq(q, addresses[i], UINT64_MAX);
+        QDict *e = controller_result(run, models[i], false, "unsupported_transfer_path_access");
+        assert_unsigned_value(e, UINT64_MAX); qobject_unref(e);
+    }
+    qtest_readl(q, CAL_DMA + 0x2c); cal_error(run, DMA_MODEL, "unsupported_transfer_path_access");
+    qtest_readl(q, CAL_DMA + 0x10); cal_error(run, DMA_MODEL, "unknown_dma_descriptor");
+    qtest_readl(q, CAL_IND + 8); cal_error(run, IND_MODEL, "unknown_indirect_parameters");
+    qtest_writel(q, CAL_ROUTE, 0); cal_error(run, ROUTE_MODEL, "unsupported_request_route");
+    qtest_writel(q, CAL_DMA + 0x28, 1); cal_error(run, DMA_MODEL, "unsupported_dma_control");
+    qtest_writel(q, CAL_DMA + 0x30, 0x10000); cal_error(run, DMA_MODEL, "unsupported_dma_status_ack");
+    const uint32_t commands[] = {0, 2, 0x21, 0xffffffff};
+    for (unsigned i = 0; i < G_N_ELEMENTS(commands); i++) {
+        qtest_writel(q, CAL_IND, commands[i]); cal_error(run, IND_MODEL, "unsupported_indirect_control");
+    }
+    cal_controller(q); cal_descriptor(q); cal_sentinel(q);
+    const uint64_t regs[] = {CAL_DMA + 0x10, CAL_DMA + 0x14, CAL_DMA + 0x18,
+                            CAL_DMA + 0x1c, CAL_DMA + 0x20, CAL_DMA + 0x24,
+                            CAL_IND + 4, CAL_IND + 8, CAL_IND + 12,
+                            FLASH_BASE + 0x1c, FLASH_BASE + 0x20, FLASH_BASE + 0x80};
+    const uint32_t values[] = {0x7e, CAL_SOURCE+2, 0xffffffc0, 0x30f00, 0x30f04, 1,
+                               1, CAL_SOURCE+2, 16, CAL_SOURCE+2, 0x708, 0};
+    const uint32_t restore[] = {0x7f, CAL_SOURCE, CAL_DEST, 0x30f04, 0x30f00, 0,
+                                0, CAL_SOURCE, 128, CAL_SOURCE, 0x707, 0xf};
+    for (unsigned i = 0; i < G_N_ELEMENTS(regs); i++) {
+        qtest_writel(q, regs[i], values[i]); qtest_writel(q, CAL_IND, 1);
+        QDict *e = controller_result(run, IND_MODEL, false, NULL);
+        g_assert_false(qdict_get_bool(e, "busy")); qobject_unref(e);
+        g_assert_cmphex(qtest_readl(q, CAL_IND), ==, 0);
+        g_assert_cmphex(qtest_readl(q, CAL_DMA + 0x30), ==, 0);
+        qtest_clock_step(q, 64); cal_unchanged(q);
+        qtest_writel(q, regs[i], restore[i]);
+    }
+    g_assert_cmpuint(cal_completions(run), ==, 0);
+    qtest_quit(q);
+}
+
+static void calibration_reset_lost_and_overflow(void)
+{
+    for (unsigned mode = 0; mode < 4; mode++) {
+        g_autofree char *run = NULL;
+        QTestState *q = new_calibration(&run);
+        cal_controller(q); cal_descriptor(q); cal_sentinel(q);
+        if (mode == 3) {
+            qtest_clock_set(q, INT64_MAX - 32);
+            qtest_writel(q, CAL_IND, 1); cal_error(run, IND_MODEL, "unsupported_calibration_deadline");
+        } else {
+            qtest_writel(q, CAL_IND, 1);
+            if (mode == 0) {
+                qtest_system_reset(q);
+            } else if (mode == 1) {
+                qtest_writel(q, PHY_BASE, 0);
+            } else {
+                qtest_writel(q, CAL_DMA, 0);
+            }
+            qtest_clock_step(q, 64);
+        }
+        g_assert_cmpuint(cal_completions(run), ==, 0);
+        if (mode == 0) {
+            g_assert_cmphex(qtest_readl(q, CAL_IND), ==, 0);
+            g_assert_cmphex(qtest_readl(q, CAL_DMA + 0x30), ==, 0);
+        } else {
+            cal_unchanged(q);
+            if (mode != 3) {
+                QDict *stop = stop_record(run);
+                g_assert_cmpstr(qdict_get_str(stop, "reason"), ==, "unsupported_device_transition");
+                g_assert_cmpint(qobject_type(qdict_get(stop, "width")), ==, QTYPE_QNULL);
+                qobject_unref(stop);
+            }
+        }
+        qtest_quit(q);
+    }
+}
+
+static void calibration_missing_and_coverage(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_calibration(&run);
+    cal_sentinel(q);
+    qtest_writel(q, CAL_IND, 1);
+    cal_error(run, IND_MODEL, "inactive_request_route");
+    qtest_writel(q, CAL_ROUTE, 0x01002a2c);
+    qtest_writel(q, CAL_IND, 1);
+    cal_error(run, IND_MODEL, "disabled_transfer_global");
+    qtest_writel(q, CAL_DMA, 0x10000000);
+    qtest_writel(q, CAL_IND, 1);
+    cal_error(run, IND_MODEL, "unknown_dma_descriptor");
+    cal_controller(q);
+    const uint64_t regs[] = {0x28, 0x10, 0x14, 0x18, 0x1c, 0x20, 0x24};
+    const uint32_t values[] = {0x10201011, 127, CAL_SOURCE, CAL_DEST, 0x30f04, 0x30f00, 0};
+    for (unsigned i = 0; i < G_N_ELEMENTS(regs); i++) {
+        qtest_writel(q, CAL_DMA + regs[i], values[i]);
+        qtest_writel(q, CAL_IND, 1);
+        cal_error(run, IND_MODEL, i + 1 == G_N_ELEMENTS(regs) ?
+                  "unknown_indirect_parameters" : "unknown_dma_descriptor");
+        cal_unchanged(q);
+    }
+    cal_descriptor(q);
+    /* All three source fields agree: these reach coverage admission rather
+     * than being rejected merely for a descriptor/trigger mismatch. */
+    const uint32_t sources[] = {CAL_SOURCE + 2, CAL_SOURCE - 2, CAL_SOURCE + 1,
+                                0xf402a080, 0x2a080, 0xffffff80};
+    for (unsigned i = 0; i < G_N_ELEMENTS(sources); i++) {
+        qtest_writel(q, CAL_DMA + 0x14, sources[i]);
+        qtest_writel(q, CAL_IND + 8, sources[i]);
+        qtest_writel(q, FLASH_BASE + 0x1c, sources[i]);
+        qtest_writel(q, CAL_IND, 1);
+        QDict *e = controller_result(run, IND_MODEL, false, NULL);
+        g_assert_false(qdict_get_bool(e, "busy"));
+        qobject_unref(e);
+        qtest_clock_step(q, 64);
+        cal_unchanged(q);
+        g_assert_cmphex(qtest_readl(q, CAL_IND), ==, 0);
+        g_assert_cmphex(qtest_readl(q, CAL_DMA + 0x30), ==, 0);
+    }
+    qtest_writel(q, CAL_DMA + 0x14, CAL_SOURCE);
+    qtest_writel(q, CAL_IND + 8, CAL_SOURCE);
+    qtest_writel(q, FLASH_BASE + 0x1c, CAL_SOURCE);
+    qtest_writel(q, CAL_DMA + 0x18, 0x1b041);
+    qtest_writel(q, CAL_IND, 1);
+    cal_error(run, IND_MODEL, "unsupported_calibration_destination");
+    qtest_clock_step(q, 64);
+    cal_unchanged(q);
+    g_assert_cmpuint(cal_completions(run), ==, 0);
+    qtest_quit(q);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -1518,6 +1801,10 @@ int main(int argc, char **argv)
     qtest_add_func("/xt4/budget/faults", budget_strict_faults);
     qtest_add_func("/xt4/budget/pause-reset-idle-warp", budget_pause_reset_idle_warp);
     qtest_add_func("/xt4/budget/timer-order", budget_timer_order);
+    qtest_add_func("/xt4/calibration/lifecycle", calibration_lifecycle);
+    qtest_add_func("/xt4/calibration/invalid", calibration_invalid);
+    qtest_add_func("/xt4/calibration/reset-lost-overflow", calibration_reset_lost_and_overflow);
+    qtest_add_func("/xt4/calibration/missing-and-coverage", calibration_missing_and_coverage);
     qtest_add_func("/xt4/phy/lifecycle", phy_lifecycle);
     qtest_add_func("/xt4/phy/invalid-reset", phy_invalid_and_reset);
     qtest_add_func("/xt4/phy/overflow", phy_overflow);

@@ -2,7 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
-from .firmware import REPO, read_regular
+from .firmware import REPO, read_regular, FlashMedia, validate_media
 from .run import write_json
 from .scenarios import scenario_from_dict, scenario_sha256
 
@@ -24,18 +24,27 @@ def write_report(run_dir: Path) -> Path:
     if fast and (type(info['budget']) is not int or not 1 <= info['budget'] <= 1000000000):
         raise ValueError('Invalid report execution budget')
     scenario = info['profile'].get('scenario')
-    if info['profile']['name'] in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration'):
+    if info['profile']['name'] in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'):
         decoded = scenario_from_dict(scenario,
             timer=info['profile']['name'] != 'bootstrap-input-exploration',
-            platform=info['profile']['name'] in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration'),
-            flash=info['profile']['name'] in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration'),
-            phy=info['profile']['name'] == 'bootstrap-phy-exploration')
+            platform=info['profile']['name'] in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
+            flash=info['profile']['name'] in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
+            phy=info['profile']['name'] in ('bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
+            transfer=info['profile']['name'] == 'bootstrap-calibration-exploration')
     else:
         if scenario is not None:
             raise ValueError('Synthetic scenario on a diagnostic report')
         decoded = None
     if info['provenance'].get('scenario_sha256') != scenario_sha256(decoded):
         raise ValueError('Report scenario fingerprint mismatch')
+    media = info['profile'].get('media')
+    if info['profile']['name'] != 'bootstrap-calibration-exploration' and 'media' in info['profile']:
+        raise ValueError('Unsupported report media')
+    try:
+        validate_media(FlashMedia(**media) if isinstance(media, dict) else media,
+                       required=info['profile']['name'] == 'bootstrap-calibration-exploration')
+    except TypeError as exc:
+        raise ValueError('Unsupported report media') from exc
     engine = json.loads(read_regular(run_dir,'engine-build.json'))
     events = [json.loads(line) for line in read_regular(run_dir,'trace.jsonl').decode().splitlines() if line]
     starts = [e for e in events if e['event']=='start']
@@ -87,6 +96,11 @@ def write_report(run_dir: Path) -> Path:
                       record.get('scenario_sha256') is not None or
                       record.get('execution_class') == 'synthetic_exploration'):
                     raise ValueError('Diagnostic report contradicts synthetic engine scenario')
+                if media is not None:
+                    if record.get('media_sha256') != media['sha256'] or record.get('cbar_base') != decoded.transfer.cbar_base:
+                        raise ValueError('Report media/layout disagrees with engine reset')
+                elif record.get('media_sha256') is not None or record.get('cbar_base') is not None:
+                    raise ValueError('Report media/layout disagrees with engine reset')
                 reset_states.append({'evidence':str(relative)+':'+str(number),
                                      'registers':record['registers']})
             if record.get('event')=='stop' and record.get('access') != 'execution':
@@ -217,6 +231,13 @@ def write_report(run_dir: Path) -> Path:
             lines += ['PHY assumptions: **initial observation0, immediate reset/disable lock clearing, '
                 'four-nanosecond master and DLL transitions.** Digital lock state does not establish '
                 'electrical timing, valid sampling taps, a passing data eye or successful calibration.']
+        if decoded.transfer is not None:
+            lines += ['Calibration transfer assumptions: **one covered128-byte source, '
+                'request2A/channel1,64ns whole delivery, active status bit16, retained addresses '
+                'and ideal taps0..127 in controller phases20/21.** Parent-profile no-DMA statements '
+                'above describe the earlier increments. Original code performs its own comparisons '
+                'and computes calibration results. Virtual CBAR F8F00000 is explicitly selected; '
+                'no GIC or full boot is supplied. Physical sampling and DMA semantics remain unmeasured.']
     lines += ['', '## Assumptions', '', *('- '+a for a in summary['assumptions']), '',
         '## Reproducibility', '', f"- Original DAT SHA256: `{summary['original_sha256']}`",
         f"- Engine SHA256: `{summary['engine_sha256']}`",

@@ -33,3 +33,6 @@ config XLNX_CSU_DMA
 
 config FUJIFILM_XT4_TRANSFER
     bool
+
+config FUJIFILM_XT4_CALIBRATION_TRANSFER
+    bool

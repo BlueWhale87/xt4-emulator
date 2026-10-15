@@ -17,6 +17,8 @@ typedef struct XT4TransferEvent {
 } XT4TransferEvent;
 typedef void (*XT4TransferEventFn)(void *opaque, const XT4TransferEvent *event);
 void xt4_transfer_set_initial(XT4TransferState *s, const uint32_t words[16]);
+bool xt4_transfer_global_enabled(XT4TransferState *, unsigned bank);
+uint64_t xt4_transfer_global_epoch(XT4TransferState *, unsigned bank);
 void xt4_transfer_set_event_callback(XT4TransferState *s, XT4TransferEventFn cb,
                                       void *opaque);
 #endif

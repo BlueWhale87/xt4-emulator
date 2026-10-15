@@ -11,6 +11,7 @@ struct XT4TransferState {
     SysBusDevice parent_obj;
     MemoryRegion mmio;
     uint32_t initial[16], globals[16];
+    uint64_t epochs[16];
     XT4TransferEventFn callback;
     void *callback_opaque;
 };
@@ -31,6 +32,9 @@ static MemTxResult transfer_access(XT4TransferState *s, hwaddr offset,
     } else if (write && ((*value ^ s->globals[bank]) & ~UINT64_C(0x10000000))) {
         event.detail = "unsupported_transfer_global_write";
     } else if (write) {
+        if (s->globals[bank] != *value) {
+            s->epochs[bank]++;
+        }
         s->globals[bank] = *value;
     } else {
         event.value = s->globals[bank];
@@ -65,6 +69,17 @@ static const MemoryRegionOps transfer_ops = {
     .impl = { .min_access_size = 1, .max_access_size = 8, .unaligned = true },
 };
 
+bool xt4_transfer_global_enabled(XT4TransferState *s, unsigned bank)
+{
+    return s && bank < 16 && (s->globals[bank] & (1U << 28));
+}
+
+uint64_t xt4_transfer_global_epoch(XT4TransferState *s, unsigned bank)
+{
+    g_assert(s && bank < 16);
+    return s->epochs[bank];
+}
+
 void xt4_transfer_set_initial(XT4TransferState *s, const uint32_t words[16])
 {
     memcpy(s->initial, words, sizeof(s->initial));
@@ -81,6 +96,9 @@ static void transfer_reset(Object *obj, ResetType type)
 {
     XT4TransferState *s = XT4_TRANSFER(obj);
     memcpy(s->globals, s->initial, sizeof(s->globals));
+    for (unsigned i = 0; i < G_N_ELEMENTS(s->epochs); i++) {
+        s->epochs[i]++;
+    }
 }
 
 static void transfer_init(Object *obj)

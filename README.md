@@ -2,7 +2,7 @@
 
 An experimental Fujifilm X-T4 machine for QEMU, with a bounded execution runner and reproducible dependency reports. The long-term goal is to run the original camera menus and virtual SD storage before developing an SD recipe manager.
 
-**Current result: original bootstrap execution completes flash and first PHY initialization, then reaches unsupported DMA request routing after 23,842 engine-counted instructions, with explicit synthetic input, timer, platform, flash and PHY assumptions. Camera menus do not boot yet.** Display, controls, storage, interrupts and full platform startup remain work in progress.
+**Current result: original bootstrap execution completes 64 calibration transfers and computes its own calibration result, then reaches an unsupported interrupt-controller read after 96,742 raw engine-counted instructions. This uses explicit synthetic input, timing, flash, PHY and ideal sampling assumptions. Camera menus do not boot yet.** Display, controls, storage, interrupts and full platform startup remain work in progress.
 
 The project runs entirely on the host. Its runner exposes no camera connection, USB passthrough, host networking or physical storage devices. It does not modify or install camera firmware.
 
@@ -11,7 +11,8 @@ The project runs entirely on the host. Its runner exposes no camera connection, 
 - [Build, firmware preparation and testing](docs/xt4/public-setup.md)
 - [Diagnostic runner, evidence and limitations](docs/xt4/foundation.md)
 - [Startup investigation](docs/xt4/startup.md)
-- [Latest PHY initialization and how to run it](docs/xt4/phy-startup.md)
+- [Latest calibration transfer and how to run it](docs/xt4/calibration-startup.md)
+- [Earlier PHY initialization](docs/xt4/phy-startup.md)
 - [Earlier flash initialization](docs/xt4/flash-startup.md)
 - [Earlier controller exploration](docs/xt4/controller-startup.md)
 - [Fast execution, count semantics and pause controls](docs/xt4/execution.md)
@@ -35,6 +36,7 @@ Fujifilm firmware, decoded images, per-camera data and local runs are **not incl
 | Transfer enable and clock-apply exploration | 127 writes / 35 reads / 2 transitions; next unknown flash write at `0xfffd8000` |
 | Causal flash command exploration | 195 writes / 125 reads / 7 transitions; next unsupported PHY-enable configuration; no array/DMA/PHY training |
 | Causal PHY lock exploration | 204 writes / 128 reads / 9 transitions; next unsupported DMA request-routing write; calibration/transfer incomplete |
+| Covered calibration transfer exploration | 2,380 writes / 2,304 reads; 64 full transfers and original-computed calibration result; next unsupported GIC read at `0xf8f01000` |
 | Original menu display and virtual controls | Not implemented |
 | Virtual SD / settings storage | Not implemented |
 | SD recipe manager | Planned after menu and storage emulation |

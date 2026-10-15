@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 import stat
-from .startup import ORIGINAL_SHA256, BOOTSTRAP_OFFSET, extract_bootstrap
+from .startup import ORIGINAL_SHA256, BOOTSTRAP_OFFSET, extract_bootstrap, extract_calibration, CALIBRATION_DAT_OFFSET, CALIBRATION_SHA256
 from .scenarios import ExplorationScenario, load_scenario, scenario_dict, scenario_sha256, validate_scenario
 
 REPO = Path(__file__).resolve().parents[1]
@@ -27,6 +27,29 @@ class Region:
 
 
 @dataclass(frozen=True)
+class FlashMedia:
+    file: str = 'inputs/calibration.bin'
+    file_size: int = 128
+    sha256: str = CALIBRATION_SHA256
+    flash_offset: int = 0x2a080
+    capacity: int = 0x4000000
+    virtual_base: int = 0xf0000000
+    policy: str = 'f0-covered-span-v1'
+
+
+def validate_media(media: FlashMedia | None, *, required: bool) -> None:
+    if not required:
+        if media is not None:
+            raise ValueError('Flash media not allowed on older profile')
+        return
+    expected = FlashMedia()
+    if not isinstance(media, FlashMedia) or media != expected or any(
+            type(value) is not type(getattr(expected, key))
+            for key, value in asdict(media).items()):
+        raise ValueError('Unsupported covered flash media')
+
+
+@dataclass(frozen=True)
 class BootProfile:
     name: str
     cpu_type: str
@@ -36,6 +59,7 @@ class BootProfile:
     assumptions: tuple[str, ...]
     models: tuple[str, ...] = ()
     scenario: ExplorationScenario | None = None
+    media: FlashMedia | None = None
 
 
 @dataclass(frozen=True)
@@ -55,21 +79,25 @@ def load_profile(name: str, *, scenario_name: str | None = None) -> BootProfile:
                 'bootstrap-timer-exploration': 'xt4-212-timer.json',
                 'bootstrap-controller-exploration': 'xt4-212-controller.json',
                 'bootstrap-flash-exploration': 'xt4-212-flash.json',
-                'bootstrap-phy-exploration': 'xt4-212-phy.json'}
+                'bootstrap-phy-exploration': 'xt4-212-phy.json',
+                'bootstrap-calibration-exploration': 'xt4-212-calibration.json'}
     if name not in profiles:
         raise ValueError('Unsupported profile')
     data = json.loads(Path(__file__).with_name('profiles').joinpath(profiles[name]).read_text())
     data.pop('schema_version')
+    if 'media' in data:
+        data['media'] = FlashMedia(**data['media'])
     data['regions'] = tuple(Region(**r) for r in data['regions'])
     data['assumptions'] = tuple(data['assumptions'])
     data['models'] = tuple(data.get('models', ()))
-    if name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration'):
+    if name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'):
         if scenario_name is None:
             raise ValueError('Exploration requires an explicit synthetic scenario')
         data['scenario'] = load_scenario(scenario_name, timer=name != 'bootstrap-input-exploration',
-                                         platform=name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration'),
-                                         flash=name in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration'),
-                                         phy=name == 'bootstrap-phy-exploration')
+                                         platform=name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
+                                         flash=name in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
+                                         phy=name in ('bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
+            transfer=name == 'bootstrap-calibration-exploration')
     elif scenario_name is not None:
         raise ValueError('Synthetic scenario is not allowed on this profile')
     profile = BootProfile(**data)
@@ -94,13 +122,18 @@ def validate_profile(profile: BootProfile) -> None:
                            'xt4-timer-exploration-v1', 'xt4-transfer-enable-exploration-v1',
                            'xt4-clock-apply-exploration-v1', 'xt4-cadence-stig-exploration-v1',
                            'mx25um51245gxdi00-boot-v1', 'xt4-cadence-phy-exploration-v1')}
+    expected_models['bootstrap-calibration-exploration'] = expected_models['bootstrap-phy-exploration'] + (
+        'xt4-request-route-exploration-v1', 'xt4-dma-channel1-exploration-v1',
+        'xt4-indirect-read-exploration-v1', 'xt4-covered-nor-media-v1')
+    validate_media(profile.media, required=profile.name == 'bootstrap-calibration-exploration')
     if profile.name not in expected_models or profile.models != expected_models[profile.name]:
         raise ValueError('Unsupported profile model set')
-    if profile.name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration'):
+    if profile.name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'):
         validate_scenario(profile.scenario, timer=profile.name != 'bootstrap-input-exploration',
-                          platform=profile.name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration'),
-                          flash=profile.name in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration'),
-                          phy=profile.name == 'bootstrap-phy-exploration')
+                          platform=profile.name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
+                          flash=profile.name in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
+                          phy=profile.name in ('bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
+            transfer=profile.name == 'bootstrap-calibration-exploration')
     elif profile.scenario is not None:
         raise ValueError('Scenario is not allowed on a diagnostic profile')
     extents = []
@@ -147,7 +180,10 @@ def read_regular(root: Path, relative: str) -> bytes:
 
 
 def profile_dict(profile: BootProfile) -> dict:
-    return {'schema_version': 1, **asdict(profile), 'scenario': scenario_dict(profile.scenario)}
+    data = {'schema_version': 1, **asdict(profile), 'scenario': scenario_dict(profile.scenario)}
+    if profile.media is None:
+        data.pop('media')
+    return data
 
 
 def verify_prepared(run: PreparedRun) -> None:
@@ -158,6 +194,12 @@ def verify_prepared(run: PreparedRun) -> None:
     # The staged declaration must retain its exact JSON types as well as values.
     if staged != expected:
         raise ValueError('Staged profile changed')
+    validate_profile(run.profile)
+    if run.profile.media is not None:
+        media = run.profile.media
+        data = read_regular(run.directory, media.file)
+        if len(data) != media.file_size or hashlib.sha256(data).hexdigest() != media.sha256:
+            raise ValueError('Staged media mismatch')
     for r in run.profile.regions:
         if r.file:
             data = read_regular(run.directory, r.file)
@@ -195,6 +237,11 @@ def prepare_run(research_root: Path, run_root: Path, profile_name: str, *,
         if len(data) != r.file_size or hashlib.sha256(data).hexdigest() != r.sha256:
             raise ValueError('Decoded image fingerprint mismatch: ' + r.name)
         images.append((r, data))
+    if profile.media is not None:
+        data = extract_calibration(original)
+        images.append((profile.media, data))
+        derived['calibration'] = {'original_dat_offset': CALIBRATION_DAT_OFFSET,
+                                  'transform': 'xor-ff', 'sha256': profile.media.sha256}
     run_root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     run_root.mkdir(mode=0o700)
     (run_root / 'inputs').mkdir(mode=0o700)

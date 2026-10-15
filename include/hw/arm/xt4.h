@@ -6,6 +6,7 @@
 #include "hw/gpio/xt4-ports.h"
 #include "hw/timer/xt4-timer.h"
 #include "hw/dma/xt4-transfer.h"
+#include "hw/dma/xt4-calibration-transfer.h"
 #include "hw/misc/xt4-clock-apply.h"
 #include "hw/ssi/xt4-flash.h"
 #include "target/arm/cpu.h"
@@ -46,6 +47,10 @@ struct XT4State {
     XT4ClockApplyState *clock_apply;
     XT4FlashState *flash;
     XT4PhyState *phy;
+    XT4CalibrationTransferState *calibration;
+    XT4CalibrationTransferContract calibration_contract;
+    XT4CoveredNor media;
+    uint8_t *media_bytes;
     XT4PhyContract phy_contract;
     XT4FlashContract flash_contract;
     const char *pending_device, *pending_detail;

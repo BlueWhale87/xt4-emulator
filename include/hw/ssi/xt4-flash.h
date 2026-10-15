@@ -10,6 +10,15 @@
 #define XT4_NOR_MODEL "mx25um51245gxdi00-boot-v1"
 #define XT4_FLASH_PROTOCOL_POLICY "dual-opcode-8d-exploration-v1"
 OBJECT_DECLARE_SIMPLE_TYPE(XT4FlashState, XT4_FLASH)
+typedef struct XT4CalibrationTransferState XT4CalibrationTransferState;
+
+typedef struct XT4FlashArraySnapshot {
+    uint32_t config, read_instruction, size, capture, partition, trigger, range;
+    uint32_t extensions, variant;
+    uint64_t nor_generation;
+    XT4NorProtocol protocol;
+    unsigned controller_phase;
+} XT4FlashArraySnapshot;
 
 typedef struct XT4FlashContract {
     uint64_t transaction_latency_ns, cr2_typical_settle_ns;
@@ -35,5 +44,7 @@ void xt4_flash_set_contract(XT4FlashState *, const XT4FlashContract *);
 void xt4_flash_set_event_callback(XT4FlashState *, XT4FlashEventFn, void *);
 void xt4_flash_set_completion_guard(XT4FlashState *, XT4FlashCompletionGuard, void *);
 void xt4_flash_set_phy(XT4FlashState *, XT4PhyState *);
+void xt4_flash_set_calibration_transfer(XT4FlashState *, XT4CalibrationTransferState *);
+bool xt4_flash_array_snapshot(XT4FlashState *, XT4FlashArraySnapshot *, const char **);
 void xt4_flash_cancel_pending(XT4FlashState *);
 #endif

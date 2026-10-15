@@ -69,6 +69,16 @@ void xt4_phy_cancel_pending(XT4PhyState *s)
     }
 }
 
+bool xt4_phy_array_ready(XT4PhyState *s, uint64_t *epoch)
+{
+    if (!s || !epoch || !s->controller_known || !s->enabled || s->busy ||
+        s->phase != PHY_DLL_LOCKED || (s->observable & 0x8001) != 0x8001) {
+        return false;
+    }
+    *epoch = s->epoch;
+    return true;
+}
+
 static void phy_complete(void *opaque)
 {
     XT4PhyState *s = opaque;

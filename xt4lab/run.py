@@ -77,7 +77,10 @@ class RunSession:
         self.segment_dir = self.prepared.directory / 'segments' / f'{self.segment:03d}'
         self.segment_dir.mkdir(parents=True, mode=0o700)
         (self.segment_dir / 'inputs').mkdir(mode=0o700)
-        for region in self.prepared.profile.regions:
+        inputs = list(self.prepared.profile.regions)
+        if self.prepared.profile.media is not None:
+            inputs.append(self.prepared.profile.media)
+        for region in inputs:
             if region.file:
                 path = self.segment_dir / region.file
                 with path.open('xb') as f:

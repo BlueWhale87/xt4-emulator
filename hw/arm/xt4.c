@@ -37,6 +37,7 @@ struct XT4ProfileDefinition {
     const XT4RegionDefinition *regions;
     size_t region_count;
     bool port_config, synthetic_inputs, timer_model, platform_model, flash_model, phy_model;
+    bool calibration_model;
 };
 
 static const XT4RegionDefinition module_regions[] = {
@@ -73,6 +74,8 @@ static const XT4ProfileDefinition profiles[] = {
       bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true },
     { "bootstrap-phy-exploration", 0, 0,
       bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true, true },
+    { "bootstrap-calibration-exploration", 0, 0,
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true, true, true },
 };
 
 static G_NORETURN void invalid(const char *message)
@@ -122,6 +125,9 @@ void xt4_record_stop(XT4State *s, CPUState *cs, const XT4Stop *stop)
         return;
     }
     s->stopped = true;
+    if (s->calibration) {
+        xt4_calibration_transfer_cancel_pending(s->calibration);
+    }
     if (s->phy) {
         xt4_phy_cancel_pending(s->phy);
     }
@@ -498,6 +504,51 @@ static void phy_event(void *opaque, const XT4PhyEvent *access)
     }
 }
 
+static void calibration_event(void *opaque, const XT4CalibrationTransferEvent *a)
+{
+    XT4State *s = opaque;
+    const char *models[] = {XT4_ROUTE_MODEL, XT4_DMA_MODEL, XT4_INDIRECT_MODEL};
+    const char *model = models[a->component];
+    QDict *event = platform_event(s, model,
+        "bounded virtual covered transfer; ideal sampling and declared timing/status/address policies",
+        a->address, a->width, a->value, a->write, a->success, a->detail,
+        a->transition, a->virtual_ns);
+    if (a->transition) {
+        qdict_put_str(event, "operation", "transfer-complete");
+    }
+    qdict_put_bool(event, "route_known", a->route_known);
+    qdict_put_int(event, "route", a->route);
+    qdict_put_int(event, "source", a->source);
+    qdict_put_int(event, "destination", a->destination);
+    qdict_put_int(event, "count", a->count);
+    qdict_put_int(event, "source_attr", a->source_attr);
+    qdict_put_int(event, "destination_attr", a->destination_attr);
+    qdict_put_int(event, "descriptor", a->descriptor);
+    qdict_put_int(event, "control", a->control);
+    qdict_put_bool(event, "active", a->active);
+    qdict_put_bool(event, "done", a->done);
+    qdict_put_bool(event, "busy", a->busy);
+    qdict_put_int(event, "epoch", a->epoch);
+    qdict_put_int(event, "started_ns", a->started_ns);
+    qdict_put_int(event, "deadline_ns", a->deadline_ns);
+    qdict_put_int(event, "phase", a->phase);
+    if (a->source_sha256) {
+        qdict_put_str(event, "source_sha256", a->source_sha256);
+        qdict_put_int(event, "source_length", a->source_length);
+    }
+    emit(s, event);
+    if (a->transition && !a->success) {
+        XT4Stop stop = {
+            .reason = "unsupported_device_transition", .access = "timer",
+            .physical_address = a->address, .has_physical = true,
+            .device = model, .detail = a->detail,
+        };
+        xt4_record_stop(s, CPU(s->cpu), &stop);
+        qemu_system_debug_request();
+        cpu_stop_current();
+    }
+}
+
 static MemTxResult unknown_read(void *opaque, hwaddr addr, uint64_t *value,
                                 unsigned size, MemTxAttrs attrs)
 {
@@ -536,6 +587,9 @@ static void reset(void *opaque)
     ARMCPU *cpu = ARM_CPU(s->cpu);
     CPUARMState *env = &cpu->env;
     cpu_reset(CPU(cpu));
+    if (s->calibration) {
+        device_cold_reset(DEVICE(s->calibration));
+    }
     if (s->ports) {
         device_cold_reset(DEVICE(s->ports));
     }
@@ -576,6 +630,10 @@ static void reset(void *opaque)
     qdict_put_str(event, "event", "reset");
     qdict_put_bool(event, "camera_booted", false);
     qdict_put_str(event, "profile", s->profile->name);
+    if (s->calibration) {
+        qdict_put_str(event, "media_sha256", XT4_CALIBRATION_SHA256);
+        qdict_put_int(event, "cbar_base", cpu->reset_cbar);
+    }
     if (s->scenario_id) {
         qdict_put_str(event, "scenario", s->scenario_id);
         qdict_put_str(event, "scenario_sha256", s->scenario_sha256);
@@ -642,7 +700,7 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
     QDict *scenario = qobject_to(QDict, obj);
     const char *id = scenario ? qdict_get_try_str(scenario, "scenario_id") : NULL;
     if (!id || (strcmp(id, "zero-ports-v1") && strcmp(id, "one-ports-v1")) ||
-        qdict_size(scenario) != (3 + profile->platform_model + profile->flash_model + profile->phy_model)) {
+        qdict_size(scenario) != (3 + profile->platform_model + profile->flash_model + profile->phy_model + profile->calibration_model)) {
         invalid("explicit supported synthetic scenario required");
     }
     QList *words = qobject_to(QList, qdict_get(scenario, "port_inputs"));
@@ -758,7 +816,38 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
         g_string_append_printf(canonical, "%s%" PRIu32, i ? "," : "", expected);
         i++;
     }
-    g_string_append_printf(canonical, "],\"scenario_id\":\"%s\",\"timer\":%s}", id, timer_json);
+    g_string_append_printf(canonical, "],\"scenario_id\":\"%s\",\"timer\":%s", id, timer_json);
+    if (profile->calibration_model) {
+        QDict *t = qobject_to(QDict, qdict_get(scenario, "transfer"));
+        if (!t || qdict_size(t) != 9 ||
+            !scenario_number(t, "initial_status_word", 0) ||
+            !scenario_number(t, "initial_indirect_control", 0) ||
+            !scenario_number(t, "transfer_latency_ns", 64) ||
+            !scenario_number(t, "cbar_base", 0xf8f00000) ||
+            g_strcmp0(qdict_get_try_str(t, "route_policy"), XT4_ROUTE_POLICY) ||
+            g_strcmp0(qdict_get_try_str(t, "source_policy"), XT4_SOURCE_POLICY) ||
+            g_strcmp0(qdict_get_try_str(t, "sample_policy"), XT4_SAMPLE_POLICY) ||
+            g_strcmp0(qdict_get_try_str(t, "status_policy"), XT4_STATUS_POLICY) ||
+            g_strcmp0(qdict_get_try_str(t, "terminal_address_policy"), XT4_ADDRESS_POLICY)) {
+            invalid("unsupported synthetic calibration contract");
+        }
+        s->calibration_contract = (XT4CalibrationTransferContract) {
+            .transfer_latency_ns = 64, .cbar_base = 0xf8f00000,
+            .route_policy = XT4_ROUTE_POLICY, .source_policy = XT4_SOURCE_POLICY,
+            .sample_policy = XT4_SAMPLE_POLICY, .status_policy = XT4_STATUS_POLICY,
+            .terminal_address_policy = XT4_ADDRESS_POLICY,
+        };
+        g_string_append(canonical,
+            ",\"transfer\":{\"cbar_base\":4176478208,\"initial_indirect_control\":0,"
+            "\"initial_status_word\":0,\"route_policy\":\"" XT4_ROUTE_POLICY "\","
+            "\"sample_policy\":\"" XT4_SAMPLE_POLICY "\","
+            "\"source_policy\":\"" XT4_SOURCE_POLICY "\","
+            "\"status_policy\":\"" XT4_STATUS_POLICY "\","
+            "\"terminal_address_policy\":\"" XT4_ADDRESS_POLICY "\",\"transfer_latency_ns\":64}");
+    } else if (qdict_haskey(scenario, "transfer")) {
+        invalid("transfer assumptions not allowed on older profile");
+    }
+    g_string_append_c(canonical, '}');
     s->scenario_id = g_strdup(id);
     s->scenario_sha256 = g_compute_checksum_for_string(G_CHECKSUM_SHA256,
                                                        canonical->str, -1);
@@ -784,13 +873,14 @@ static const XT4ProfileDefinition *validate_profile(int dir, XT4State *s)
     QObject *models_obj = qdict_get(p, "models");
     QList *models = qobject_to(QList, models_obj);
     if ((models_obj && !models) ||
-        (profile->port_config ? !models || qlist_size(models) != (1 + profile->synthetic_inputs + profile->timer_model + 2 * profile->platform_model + 2 * profile->flash_model + profile->phy_model) :
+        (profile->port_config ? !models || qlist_size(models) != (1 + profile->synthetic_inputs + profile->timer_model + 2 * profile->platform_model + 2 * profile->flash_model + profile->phy_model + 4 * profile->calibration_model) :
                                models && qlist_size(models) != 0)) {
         invalid("unsupported device model set");
     }
     if (profile->port_config) {
         const char *expected[] = {XT4_PORT_CONFIG_MODEL, XT4_STATIC_PORT_INPUT_MODEL, XT4_TIMER_MODEL,
-                                  XT4_TRANSFER_MODEL, XT4_CLOCK_APPLY_MODEL, XT4_FLASH_MODEL, XT4_NOR_MODEL, XT4_PHY_MODEL};
+                                  XT4_TRANSFER_MODEL, XT4_CLOCK_APPLY_MODEL, XT4_FLASH_MODEL, XT4_NOR_MODEL, XT4_PHY_MODEL,
+                                  XT4_ROUTE_MODEL, XT4_DMA_MODEL, XT4_INDIRECT_MODEL, XT4_MEDIA_MODEL};
         const QListEntry *entry;
         int index = 0;
         QLIST_FOREACH_ENTRY(models, entry) {
@@ -801,6 +891,21 @@ static const XT4ProfileDefinition *validate_profile(int dir, XT4State *s)
         }
     }
     validate_scenario(p, profile, s);
+    if (profile->calibration_model) {
+        QDict *m = qobject_to(QDict, qdict_get(p, "media"));
+        if (!m || qdict_size(m) != 7 ||
+            g_strcmp0(qdict_get_try_str(m, "file"), "inputs/calibration.bin") ||
+            g_strcmp0(qdict_get_try_str(m, "sha256"), XT4_CALIBRATION_SHA256) ||
+            g_strcmp0(qdict_get_try_str(m, "policy"), XT4_SOURCE_POLICY) ||
+            !scenario_number(m, "file_size", 128) ||
+            !scenario_number(m, "flash_offset", 0x2a080) ||
+            !scenario_number(m, "capacity", 0x4000000) ||
+            !scenario_number(m, "virtual_base", 0xf0000000)) {
+            invalid("unsupported calibration media");
+        }
+    } else if (qdict_haskey(p, "media")) {
+        invalid("media not allowed on older profile");
+    }
     QList *regions = qobject_to(QList, qdict_get(p, "regions"));
     QDict *regs = qobject_to(QDict, qdict_get(p, "registers"));
     if (!regions || qlist_size(regions) != profile->region_count ||
@@ -879,6 +984,19 @@ static void init(MachineState *machine)
             invalid("decoded image fingerprint mismatch");
         }
     }
+    if (s->profile->calibration_model) {
+        size_t size;
+        s->media_bytes = read_file(inputs, "calibration.bin", &size);
+        g_autofree char *hash = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
+                                                         s->media_bytes, size);
+        if (size != 128 || strcmp(hash, XT4_CALIBRATION_SHA256)) {
+            invalid("calibration media fingerprint mismatch");
+        }
+        s->media = (XT4CoveredNor) {
+            .bytes = s->media_bytes, .offset = 0x2a080, .length = 128,
+            .capacity = 0x4000000, .virtual_base = 0xf0000000,
+        };
+    }
     close(inputs);
     int out = openat(dir, "engine-events.jsonl",
                      O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
@@ -935,15 +1053,36 @@ static void init(MachineState *machine)
         }
         xt4_flash_set_event_callback(s->flash, flash_event, s);
         xt4_flash_set_completion_guard(s->flash, flash_can_complete, s);
+        if (s->profile->calibration_model) {
+            s->calibration = XT4_CALIBRATION_TRANSFER(qdev_new(TYPE_XT4_CALIBRATION_TRANSFER));
+            xt4_calibration_transfer_set_contract(s->calibration, &s->calibration_contract);
+            xt4_calibration_transfer_set_links(s->calibration, s->flash, s->phy,
+                s->transfer, &s->ram[0], bootstrap_regions[0].base,
+                bootstrap_regions[0].size, &s->media);
+            xt4_calibration_transfer_set_event_callback(s->calibration, calibration_event, s);
+            xt4_calibration_transfer_set_completion_guard(s->calibration, flash_can_complete, s);
+            xt4_flash_set_calibration_transfer(s->flash, s->calibration);
+        }
         sysbus_realize_and_unref(SYS_BUS_DEVICE(s->flash), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(s->flash), 0, 0xfffd8000);
         if (s->phy) {
             sysbus_realize_and_unref(SYS_BUS_DEVICE(s->phy), &error_fatal);
             sysbus_mmio_map_overlap(SYS_BUS_DEVICE(s->phy), 0, 0xfffd80b4, 1);
         }
+        if (s->calibration) {
+            const hwaddr bases[] = {0xfff4a500, 0xfffe1010, 0xfffd8060};
+            sysbus_realize_and_unref(SYS_BUS_DEVICE(s->calibration), &error_fatal);
+            for (unsigned i = 0; i < G_N_ELEMENTS(bases); i++) {
+                sysbus_mmio_map_overlap(SYS_BUS_DEVICE(s->calibration), i, bases[i], 1);
+            }
+        }
     }
     s->cpu = XT4_CPU(object_new(TYPE_XT4_CPU));
     s->cpu->board = s;
+    if (s->calibration) {
+        object_property_set_uint(OBJECT(s->cpu), "reset-cbar",
+                                 s->calibration_contract.cbar_base, &error_fatal);
+    }
     qdev_realize(DEVICE(s->cpu), NULL, &error_fatal);
     if (s->instruction_budget) {
         s->budget_timer = timer_new_full(NULL, QEMU_CLOCK_VIRTUAL, SCALE_NS,

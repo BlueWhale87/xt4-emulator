@@ -29,5 +29,6 @@ void xt4_phy_set_contract(XT4PhyState *, const XT4PhyContract *);
 void xt4_phy_set_event_callback(XT4PhyState *, XT4PhyEventFn, void *);
 void xt4_phy_set_completion_guard(XT4PhyState *, XT4PhyCompletionGuard, void *);
 bool xt4_phy_set_controller_config(XT4PhyState *, bool, const char **);
+bool xt4_phy_array_ready(XT4PhyState *, uint64_t *epoch);
 void xt4_phy_cancel_pending(XT4PhyState *);
 #endif

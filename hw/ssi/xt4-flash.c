@@ -4,6 +4,7 @@
  */
 #include "qemu/osdep.h"
 #include "hw/ssi/xt4-flash.h"
+#include "hw/dma/xt4-calibration-transfer.h"
 #include "hw/core/resettable.h"
 #include "qemu/module.h"
 #include "qemu/timer.h"
@@ -14,6 +15,7 @@ struct XT4FlashState {
     QEMUTimer *timer;
     XT4FlashContract contract;
     XT4PhyState *phy;
+    XT4CalibrationTransferState *calibration;
     uint32_t reg[64];
     uint64_t known;
     bool busy;
@@ -130,12 +132,16 @@ static bool decode_request(XT4FlashState *s, uint32_t command,
 static const char *write_register(XT4FlashState *s, hwaddr off, uint32_t value,
                                    XT4FlashEvent *e)
 {
+    if (xt4_calibration_transfer_busy(s->calibration)) {
+        return "busy_calibration_transfer";
+    }
     if (s->busy) {
         return "busy_flash_controller";
     }
     switch (off) {
     case 0:
-        if ((value & ~(CONFIG_MASK | (1U << 31) | (s->phy ? 8U : 0))) ||
+        if ((value & ~(CONFIG_MASK | (1U << 31) | (s->phy ? 8U : 0) |
+                       (s->calibration ? (1U << 15) : 0))) ||
             (value & (0xfU << 10))) {
             return "unsupported_flash_config";
         }
@@ -152,6 +158,11 @@ static const char *write_register(XT4FlashState *s, hwaddr off, uint32_t value,
         break;
     case 4: case 8: case 0xc: case 0x10: case 0x14: case 0x20:
     case 0x94: case 0xa8: case 0xac:
+        break;
+    case 0x1c: case 0x80:
+        if (!s->calibration) {
+            return "unsupported_flash_register";
+        }
         break;
     case 0xb4:
         if (!(s->known & KNOWN(0))) {
@@ -247,7 +258,8 @@ static MemTxResult flash_access(XT4FlashState *s, hwaddr off, uint64_t *value,
     } else {
         e.value = REG(s, off);
         if (off == 0) {
-            e.value |= s->busy ? 0 : (1U << 31);
+            e.value |= (s->busy || xt4_calibration_transfer_busy(s->calibration)) ?
+                       0 : (1U << 31);
         } else if (off == 0x90) {
             e.value |= s->busy ? 2 : 0;
         }
@@ -281,6 +293,46 @@ static const MemoryRegionOps flash_ops = {
 void xt4_flash_set_phy(XT4FlashState *s, XT4PhyState *phy)
 {
     s->phy = phy;
+}
+
+void xt4_flash_set_calibration_transfer(XT4FlashState *s,
+                                        XT4CalibrationTransferState *path)
+{
+    s->calibration = path;
+}
+
+bool xt4_flash_array_snapshot(XT4FlashState *s, XT4FlashArraySnapshot *out,
+                              const char **detail)
+{
+    const uint64_t required = KNOWN(0) | KNOWN(4) | KNOWN(0x10) |
+        KNOWN(0x14) | KNOWN(0x1c) | KNOWN(0x20) | KNOWN(0x80) |
+        KNOWN(0xe0) | KNOWN(0xf0);
+    const char *why = NULL;
+    if (!s || !out || !s->calibration || s->busy ||
+        (s->known & required) != required) {
+        why = "unknown_calibration_flash_state";
+    } else if ((REG(s, 0) & 0x41008009) != 0x41008009 ||
+               (REG(s, 4) != 0x140333ee && REG(s, 4) != 0x150333ee) ||
+               REG(s, 0x14) != 0x101003 || REG(s, 0x10) != 1 ||
+               (REG(s, 0xe0) >> 24) != 0x11 || REG(s, 0xf0) != 0x10 ||
+               s->nor.protocol != XT4_NOR_OPI_DTR) {
+        why = "unsupported_calibration_flash_state";
+    }
+    if (detail) {
+        *detail = why;
+    }
+    if (why) {
+        return false;
+    }
+    *out = (XT4FlashArraySnapshot) {
+        .config = REG(s, 0), .read_instruction = REG(s, 4),
+        .size = REG(s, 0x14), .capture = REG(s, 0x10),
+        .partition = REG(s, 0x20), .trigger = REG(s, 0x1c),
+        .range = REG(s, 0x80), .extensions = REG(s, 0xe0),
+        .variant = REG(s, 0xf0), .nor_generation = s->nor.generation,
+        .protocol = s->nor.protocol, .controller_phase = REG(s, 4) >> 24,
+    };
+    return true;
 }
 
 void xt4_flash_set_contract(XT4FlashState *s, const XT4FlashContract *c)
