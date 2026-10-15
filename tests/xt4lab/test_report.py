@@ -53,5 +53,32 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertTrue((path/'report.md').is_file())
 
+    def test_legacy_profile_without_models(self):
+        from xt4lab.report import write_report
+        with tempfile.TemporaryDirectory(dir=REPO/'runs') as tmp:
+            run = prepare_run(RESEARCH, Path(tmp)/'legacy', 'module-entry-diagnostic')
+            s = RunSession(run, REPO/'build/qemu-system-arm', budget=1)
+            s.step(); s.close()
+            p = run.directory/'run-info.json'
+            info = json.loads(p.read_text())
+            info['profile'].pop('models', None)
+            p.write_text(json.dumps(info))
+            write_report(run.directory)
+            data = json.loads((run.directory/'summary.json').read_text())
+            self.assertIn('models', data)
+            self.assertEqual(data['models'], [])
+            self.assertEqual(data['modeled_write_count'], 0)
+
+    def test_port_cli_profile(self):
+        with tempfile.TemporaryDirectory(dir=REPO/'runs') as tmp:
+            p = Path(tmp)/'cli-ports'
+            result = subprocess.run([sys.executable, '-m', 'xt4lab', 'run',
+                '--research-root', str(RESEARCH), '--out', str(p), '--profile',
+                'bootstrap-port-config-diagnostic', '--steps', '1'],
+                cwd=REPO, text=True, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            data = json.loads((p/'summary.json').read_text())
+            self.assertEqual(data['models'], ['xt4-port-config-v1'])
+
 if __name__=='__main__':
     unittest.main()

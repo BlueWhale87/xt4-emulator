@@ -66,3 +66,5 @@ Use a new output directory for each run, without commas in its path. Expected cu
 `--profile validation` deliberately refuses to run because authentic boot state is incomplete. See [the runner guide](foundation.md) for pause, reset and reporting controls.
 
 The [bootstrap investigation](startup.md) includes the newer profile and its 14,731-instruction hardware checkpoint. Use its `--steps 30000` command to reproduce that path.
+
+The [port configuration model guide](port-bank.md) has the latest `bootstrap-port-config-diagnostic` command. It also needs only the original DAT. It records 97 modeled writes and stops on an unknown external input after 19,613 instructions. QEMU runs headlessly at this stage; view the generated `report.md` and `device-events.json`. A native camera menu window is not yet implemented.

@@ -48,3 +48,9 @@ Two firmware-backed test runs on 15 October 2026 each completed eight original i
 The [bootstrap diagnostic](startup.md) now executes a recovered earlier startup boundary for 14,731 instructions, stopping at its first unknown hardware write. Remaining platform dependencies precede native framebuffer menus and controls, then virtual SD/settings operations. The recipe manager follows that working firmware/storage foundation. Emulator behavior applies to modeled paths and cannot establish physical-camera recovery or firmware safety.
 
 The roadmap is summarized in the [project README](../../README.md). Recovered startup dependencies and their remaining unknowns are tracked in the [startup investigation](startup.md).
+
+## Port configuration continuation
+
+The new fixed `bootstrap-port-config-diagnostic` profile enables only `xt4-port-config-v1`. It preserves the same original bootstrap and incoming CPU assumptions, executes 97 inferred logical configuration writes, then stops at an unknown external pin read after 19,613 completed instructions. See [the port-bank guide](port-bank.md). No pin fixture, IRQ, timer, electrical behavior or camera connection is added.
+
+Reports include the selected model, successful write/read counts, `device-events.json` and a separate canonical modeled-event hash. Old schema-1 reports without a model list remain readable. The original default profile and both earlier dependency checkpoints remain available.

@@ -2,7 +2,7 @@
 
 An experimental Fujifilm X-T4 machine for QEMU, with a bounded execution runner and reproducible dependency reports. The long-term goal is to run the original camera menus and virtual SD storage before developing an SD recipe manager.
 
-**Current result: 14,731 original bootstrap instructions execute, then stop at the first unknown hardware register. Camera menus do not boot yet.** Display, controls, storage, interrupts and full platform startup remain work in progress.
+**Current result: 19,613 original bootstrap instructions execute through 97 modeled configuration writes, then stop at an unknown external pin read. Camera menus do not boot yet.** Display, controls, storage, interrupts and full platform startup remain work in progress.
 
 The project runs entirely on the host. Its runner exposes no camera connection, USB passthrough, host networking or physical storage devices. It does not modify or install camera firmware.
 
@@ -23,12 +23,13 @@ Fujifilm firmware, decoded images, per-camera data and local runs are **not incl
 | Precise unknown-memory and exception stops | Implemented |
 | Original firmware entry trace | Reproducible; eight completed instructions |
 | Original bootstrap execution | Reproducible first hardware write; 14,731 instructions |
+| Port configuration model | 97 writes verified; next external input is unknown |
 | Full platform startup | Under investigation |
 | Original menu display and virtual controls | Not implemented |
 | Virtual SD / settings storage | Not implemented |
 | SD recipe manager | Planned after menu and storage emulation |
 
-Both profiles assume one Cortex-A7 core, disabled MMU/caches initially and explicitly recorded zero allocation. The original module-entry profile uses a synthetic stack; the new bootstrap profile executes original stack setup. Neither is a measured cold-boot reconstruction. Unknown hardware stops execution; the emulator does not fabricate successful device responses.
+All profiles assume one Cortex-A7 core, disabled MMU/caches initially and explicitly recorded zero allocation. The original module-entry profile uses a synthetic stack; the bootstrap profiles execute original stack setup. The port configuration model tracks inferred logical settings and unknown bits. These are diagnostic boundaries rather than measured cold-boot reconstructions. Unknown hardware stops execution; the emulator does not fabricate successful device responses.
 
 Emulation results apply only to modeled behavior. They do not establish physical-camera recovery or firmware safety.
 
