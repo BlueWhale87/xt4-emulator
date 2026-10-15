@@ -6,7 +6,7 @@ The original DAT and decoded firmware are external, read-only research inputs. N
 
 ## Build and test
 
-Use the existing Python 3.13 installation explicitly; the host's `python3` shell command may select an older installation. From this checkout:
+The tested host uses Python 3.13. Install the build prerequisites and prepare the external firmware inputs as described in [public checkout setup](public-setup.md). From this checkout:
 
 ```sh
 python3.13 scripts/build-xt4.py
@@ -47,4 +47,4 @@ Two firmware-backed test runs on 15 October 2026 each completed eight original i
 
 The next milestone is recovering genuine startup dependencies offline, followed by native framebuffer menus and controls, then virtual SD/settings operations. The recipe manager follows that working firmware/storage foundation. Emulator behavior applies to modeled paths and cannot establish physical-camera recovery or firmware safety.
 
-The approved project design is retained outside this checkout in `../../docs/superpowers/specs/2026-10-15-xt4-full-system-emulator-design.md` relative to the checkout root.
+The roadmap is summarized in the [project README](../../README.md). Recovered startup dependencies and their remaining unknowns are tracked in the [startup investigation](startup.md).

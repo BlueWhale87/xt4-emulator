@@ -1,0 +1,66 @@
+# Public checkout setup
+
+The first prototype retains its original project-relative input layout. Use this layout to build and run it without changing source paths:
+
+```text
+xt4-lab/
+  work/xt4-emulator/                 # this repository
+  research/2026-10-14-xt4-firmware/
+    FWUP0024.DAT                    # obtain separately
+    unpacked/segment-260274.bin      # generated locally
+    unpacked/segment-5c0274.bin
+    unpacked/segment-ae0274.bin
+    unpacked/segment-1a00274.bin
+```
+
+## Source and build
+
+The tested host is Apple Silicon macOS with Python 3.13, Clang, GLib, pkgconf and Ninja. The runner requires Unix-domain sockets and POSIX file-opening behavior. Windows hosts have not been validated.
+
+```sh
+mkdir -p xt4-lab/work xt4-lab/research/2026-10-14-xt4-firmware
+git clone --depth 64 https://github.com/BlueWhale87/xt4-emulator.git xt4-lab/work/xt4-emulator
+cd xt4-lab/work/xt4-emulator
+git fetch --depth 1 https://github.com/qemu/qemu.git tag v11.1.2
+python3.13 scripts/build-xt4.py
+```
+
+The pin check requires the base release to be an ancestor of the checkout. If a shallow clone does not contain that ancestry, deepen the project checkout before building:
+
+```sh
+git fetch --deepen=64 origin
+```
+
+The build is local and never installs QEMU globally. Initial dependency acquisition may use the Internet; execution uses local files and a private Unix socket.
+
+## Prepare your firmware
+
+Obtain the official **X-T4 2.12** update from [Fujifilm support](https://fujifilm-x.com/global/support/download/firmware/cameras/x-t4/). This repository does not download or redistribute it. Put `FWUP0024.DAT` in the external research directory shown above, then from the repository root:
+
+```sh
+cp contrib/xt4-offline/xt4_unpack.py ../../research/2026-10-14-xt4-firmware/
+python3.13 ../../research/2026-10-14-xt4-firmware/xt4_unpack.py
+```
+
+The decoder verifies the exact input hash before decoding. It checks declared lengths and backward-reference bounds and produces a manifest. The algorithm is reconstructed from the update file; decoded output has not been compared to a camera RAM dump. Re-running the decoder replaces its local decoded outputs; keep the original DAT read-only.
+
+Keep firmware and decoded files outside the repository. Run directories contain private firmware copies and host paths and are ignored by Git; do not upload them wholesale.
+
+## Verify and run
+
+After building and preparing the firmware:
+
+```sh
+python3.13 -m unittest discover -s contrib/xt4-offline -v
+python3.13 scripts/test-xt4.py
+python3.13 -m xt4lab run \
+  --research-root ../../research/2026-10-14-xt4-firmware \
+  --out runs/first-firmware-trace \
+  --profile module-entry-diagnostic --steps 1000
+```
+
+The full suite includes firmware-backed tests and therefore requires your local update and decoded inputs. It also exercises the built QEMU machine. The decoder's small unit suite needs no firmware or camera.
+
+Use a new output directory for each run, without commas in its path. Expected current result: eight completed original instructions followed by `unsupported_access` at PC `0x01291024`, reading one byte at `0x00e20008`. Read `report.md` in the output directory. This is a dependency trace, not a successful camera boot.
+
+`--profile validation` deliberately refuses to run because authentic boot state is incomplete. See [the runner guide](foundation.md) for pause, reset and reporting controls.

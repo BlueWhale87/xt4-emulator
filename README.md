@@ -1,0 +1,38 @@
+# X-T4 offline emulator research
+
+An experimental Fujifilm X-T4 machine for QEMU, with a bounded execution runner and reproducible dependency reports. The long-term goal is to run the original camera menus and virtual SD storage before developing an SD recipe manager.
+
+**Current result: eight original firmware instructions execute, then the diagnostic run stops at missing startup state. Camera menus do not boot yet.** Display, controls, storage, interrupts and full platform startup remain work in progress.
+
+The project runs entirely on the host. Its runner exposes no camera connection, USB passthrough, host networking or physical storage devices. It does not modify or install camera firmware.
+
+## Start here
+
+- [Build, firmware preparation and testing](docs/xt4/public-setup.md)
+- [Diagnostic runner, evidence and limitations](docs/xt4/foundation.md)
+- [Startup investigation](docs/xt4/startup.md)
+
+Fujifilm firmware, decoded images, per-camera data and local runs are **not included**. Obtain your own official X-T4 2.12 update. The input is pinned to SHA-256 `853d273b5603d3a2b93493f0ebd6a762b0b4b6bdc70317777775ae5f8ed93bc5`; other versions are rejected. The included offline decoder writes only local files.
+
+## Project status
+
+| Work | Status |
+| --- | --- |
+| Pinned QEMU Arm CPU engine | Implemented; software translation |
+| Checked firmware loading and isolated run controls | Implemented |
+| Precise unknown-memory and exception stops | Implemented |
+| Original firmware entry trace | Reproducible; eight completed instructions |
+| Authentic bootstrap / platform startup | Under investigation |
+| Original menu display and virtual controls | Not implemented |
+| Virtual SD / settings storage | Not implemented |
+| SD recipe manager | Planned after menu and storage emulation |
+
+The initial diagnostic profile assumes one Cortex-A7 core, a synthetic stack, disabled MMU/caches and explicitly recorded zero-filled RAM. It is not a cold-boot reconstruction. Unknown hardware stops execution; the emulator does not fabricate successful device responses.
+
+Emulation results apply only to modeled behavior. They do not establish physical-camera recovery or firmware safety.
+
+## QEMU base and licensing
+
+This repository is a development fork of [QEMU](https://github.com/qemu/qemu), based on **11.1.2**, commit `4fc49f46dc95d4a27de2509e7fceb2931e91faeb`. The original [QEMU README](README.rst), [LICENSE](LICENSE), [COPYING](COPYING), notices and file-specific licenses are retained. QEMU as a whole is distributed under GPL version 2; individual files and components may have other compatible terms described in those notices.
+
+This is an independent research project, unaffiliated with Fujifilm. Fujifilm and X-T4 are trademarks of their respective owners.

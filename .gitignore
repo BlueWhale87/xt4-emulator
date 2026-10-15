@@ -23,3 +23,9 @@ GTAGS
 # X-T4 local laboratory outputs
 /runs/
 __pycache__/
+# Vendor inputs stay external; do not publish local firmware copies.
+FWUP0024.DAT
+segment-*.bin
+/firmware/
+/research/
+/unpacked/
