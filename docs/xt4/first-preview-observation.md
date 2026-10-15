@@ -118,12 +118,14 @@ Original-firmware UI execution and X-T4 performance are separate claims.
 ## Static evidence
 
 - Getter wrapper: `ev_373e30f5209e0e93493af99253921c5bf1e081cc7c05da72cb76098743fb3e6e`.
-- Getter instructions / isolated probe: `ev_fd0d146f10412aa45e3851eb95cc06f18edb689a6eabc543cd499083f05c9818`.
+- Getter instructions: `ev_fd0d146f10412aa45e3851eb95cc06f18edb689a6eabc543cd499083f05c9818`.
 - Setter wrapper: `ev_c3076417556bda46f4c3eb67a664adf1a14473fe4809d4ef5ec79375fa928657`.
 - Setter leaf: `ev_52249738b3dab06ccd009da6b1cc37e9afa92575252fd6a87104199c90bd5196`.
 - Render instructions: `ev_099e3b6019cc74f03577662347612629f699456a71189bf1678456cb9b4791f2`.
 - Update path: `ev_591b61b56313d30999bf27e8350de16cec2a63a76eac46bf73d88f3a4b6e55e5`.
 
-These establish static candidates and the limited isolated getter result, not
-natural preview execution. All candidates remain disabled in
+These records establish static candidates. The separate
+[readiness evidence](preview-overlay-readiness.json) records the limited
+synthetic getter experiment under `picture_getter_probe`, including per-case
+trace hashes; neither establishes natural preview execution. All candidates remain disabled in
 `contrib/xt4-native-detection/profiles/xt4-2.12-evidence.json`.
