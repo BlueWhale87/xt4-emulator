@@ -3,11 +3,14 @@ import argparse
 from pathlib import Path
 from .firmware import REPO, prepare_run
 from .run import RunSession
+from .report import write_report
 
 
 def main():
     parser = argparse.ArgumentParser(description='Offline X-T4 firmware execution lab')
     commands = parser.add_subparsers(dest='command', required=True)
+    report = commands.add_parser('report')
+    report.add_argument('run_dir',type=Path)
     run = commands.add_parser('run')
     run.add_argument('--research-root',type=Path,required=True)
     run.add_argument('--out',type=Path,required=True)
@@ -15,7 +18,10 @@ def main():
     run.add_argument('--steps',type=int,default=1000)
     run.add_argument('--interactive',action='store_true')
     args = parser.parse_args()
-    prepared = prepare_run(args.research_root,args.out,args.profile)
+    if args.command == 'report':
+        print(write_report(args.run_dir))
+        return
+    prepared = prepare_run(args.research_root.resolve(),args.out,args.profile)
     session = RunSession(prepared, REPO/'build/qemu-system-arm',budget=args.steps)
     try:
         if not args.interactive:
@@ -42,6 +48,7 @@ def main():
         pass
     finally:
         session.close()
+        print(write_report(prepared.directory))
 
 
 if __name__ == '__main__':
