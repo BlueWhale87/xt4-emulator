@@ -6,6 +6,7 @@ on:
       - 'scripts/test-xt4-native.py'
       - '.github/workflows/xt4-native.yml'
   push:
+    branches: [main]
     paths:
       - 'contrib/xt4-native-detection/**'
       - 'scripts/test-xt4-native.py'

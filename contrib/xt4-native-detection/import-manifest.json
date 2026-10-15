@@ -402,6 +402,7 @@
   "integration_changes": [
     "portable compiler/library paths and integrity verification",
     "public setup/docs and source attribution",
-    "private benchmark reports and generated binaries omitted"
+    "private benchmark reports and generated binaries omitted",
+    "reference runner explicitly includes fixed-width integer and environment headers for Linux"
   ]
 }

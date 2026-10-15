@@ -1,6 +1,8 @@
 #include "facedetectcnn.h"
 #include "reference_identity.h"
 #include <algorithm>
+#include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <string>
