@@ -51,6 +51,11 @@ Observe task/context identity, clear/draw/flush/completion order, surface altern
 
 ## Gates before live detection boxes
 
+The [first preview observation procedure](first-preview-observation.md) specifies
+the mapping checks, register/call capture points, frame-ownership evidence and
+render-order observations for the next natural firmware run. It can be used
+without changing the DMA implementation or enabling detector bindings.
+
 1. Reach the preview and UI tasks through original firmware, resolving startup dependencies explicitly.
 2. Confirm runtime mappings/calling convention and identify the real display/PIC context.
 3. Establish frame dimensions, accessible extent, stride, format, completion/reuse and cache rules.
