@@ -17,6 +17,7 @@ The project runs entirely on the host. Its runner exposes no camera connection, 
 - [Earlier flash initialization](docs/xt4/flash-startup.md)
 - [Earlier controller exploration](docs/xt4/controller-startup.md)
 - [Fast execution, count semantics and pause controls](docs/xt4/execution.md)
+- [Research workflow and efficient checkpoint validation](docs/xt4/research-workflow.md)
 
 Fujifilm firmware, decoded images, per-camera data and local runs are **not included**. Obtain your own official X-T4 2.12 update. The input is pinned to SHA-256 `853d273b5603d3a2b93493f0ebd6a762b0b4b6bdc70317777775ae5f8ed93bc5`; other versions are rejected. The included offline decoder writes only local files.
 

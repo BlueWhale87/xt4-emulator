@@ -30,9 +30,10 @@ class PortRunTests(unittest.TestCase):
     def run_original(self, path):
         if not path.exists():
             run = prepare_run(RESEARCH, path, PROFILE)
-            s = RunSession(run, REPO / 'build/qemu-system-arm', budget=30000)
+            s = RunSession(run, REPO / 'build/qemu-system-arm', budget=30000,
+                           execution_mode='bounded-continue')
             try:
-                s.continue_steps(30000)
+                s.continue_fast()
             finally:
                 s.close()
             write_report(path)
@@ -42,7 +43,12 @@ class PortRunTests(unittest.TestCase):
         data = self.run_original(self.paths[0])
         stop = data['stop']
         self.assertEqual(stop['reason'], 'unsupported_access', stop)
-        self.assertGreater(data['completed_steps'], 14731)
+        self.assertGreater(data['engine_instruction_count'], 14731)
+        self.assertEqual(data['completed_steps'], 0)
+        self.assertEqual(data['completed_pcs'], [])
+        # Pinned from the same unchanged bootstrap in single-step mode.
+        self.assertEqual(data['canonical_device_events_sha256'],
+                         'aed670eda7ac3a9e46bc869ff5829b9c91e8d008d2e6081874599d657113a8dd')
         self.assertEqual((stop['pc'], stop['physical_address'], stop['width']),
                          (0x4f7c, 0xfff41014, 4))
         self.assertEqual(stop['access'], 'read')

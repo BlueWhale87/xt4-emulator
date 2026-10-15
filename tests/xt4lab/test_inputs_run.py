@@ -10,6 +10,11 @@ from xt4lab.run import RunSession
 
 REPO = Path(__file__).resolve().parents[2]
 RESEARCH = REPO.parents[1] / 'research/2026-10-14-xt4-firmware'
+# Original single-step device-event oracles, retained when using compact runs.
+DEVICE_HASHES = {
+    'zero-ports-v1': '69795b5f0a9730e2a7fe4a60977380436880eb3f1f3c3fd1838569167ced6ea8',
+    'one-ports-v1': 'b6a3f63730083d21e79c3188ce2e9e82fcc8dcfffc864bce8f6ade70d3f2a1a2',
+}
 
 
 class InputRunTests(unittest.TestCase):
@@ -22,9 +27,10 @@ class InputRunTests(unittest.TestCase):
                             'bootstrap-input-exploration', scenario_name=name)
                     except TypeError as exc:
                         self.fail('Input scenario execution is missing: ' + str(exc))
-                    s = RunSession(run, REPO / 'build/qemu-system-arm', budget=30000)
+                    s = RunSession(run, REPO / 'build/qemu-system-arm', budget=30000,
+                                   execution_mode='bounded-continue')
                     try:
-                        s.continue_steps(30000)
+                        s.continue_fast()
                         stop = s.stop
                         self.assertEqual((stop['reason'], stop.get('pc'), stop.get('physical_address'),
                                           stop.get('width'), stop.get('value')),
@@ -35,7 +41,10 @@ class InputRunTests(unittest.TestCase):
                         s.close()
                     write_report(run.directory)
                     summary = json.loads((run.directory / 'summary.json').read_text())
-                    self.assertGreater(summary['completed_steps'], 19613)
+                    self.assertGreater(summary['engine_instruction_count'], 19613)
+                    self.assertEqual(summary['completed_steps'], 0)
+                    self.assertEqual(summary['completed_pcs'], [])
+                    self.assertEqual(summary['canonical_device_events_sha256'], DEVICE_HASHES[name])
                     self.assertEqual((summary['modeled_write_count'], summary['modeled_read_count']), (97, 16))
                     self.assertEqual(summary['execution_class'], 'synthetic_exploration')
                     self.assertEqual(summary['scenario']['scenario_id'], name)
