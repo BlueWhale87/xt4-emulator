@@ -80,7 +80,8 @@ void xt4_record_stop(XT4State *s, CPUState *cs, const XT4Stop *stop)
     qdict_put_str(event, "event", "stop");
     qdict_put_str(event, "reason", stop->reason);
     qdict_put_int(event, "core", cs->cpu_index);
-    qdict_put_int(event, "pc", ARM_CPU(cs)->env.regs[15]);
+    qdict_put_int(event, "architectural_pc", ARM_CPU(cs)->env.regs[15]);
+    qdict_put_int(event, "pc", stop->has_origin_pc ? stop->origin_pc : ARM_CPU(cs)->env.regs[15]);
     qdict_put_str(event, "access", stop->access);
     if (stop->has_virtual) {
         qdict_put_int(event, "virtual_address", stop->virtual_address);

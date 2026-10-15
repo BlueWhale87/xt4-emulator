@@ -18,6 +18,8 @@ typedef struct XT4Stop {
     unsigned width;
     int exception;
     bool has_virtual, has_physical, has_value;
+    bool has_origin_pc;
+    uint32_t origin_pc;
 } XT4Stop;
 
 struct XT4CPU {

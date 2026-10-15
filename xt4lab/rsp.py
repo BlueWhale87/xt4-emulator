@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import socket
+import select
 import time
 import xml.etree.ElementTree as ET
 
@@ -21,6 +22,10 @@ class RspClient:
         self.sock.connect(str(socket_path))
         self.timeout = timeout
         self.deadline = None
+        self.pending_command = None
+        self.interrupt_requested = lambda: False
+        self._interrupt_sent = False
+        self._response_deadline = None
         self._registers = None
 
     def close(self) -> None:
@@ -30,13 +35,26 @@ class RspClient:
 
     def _read(self, count: int) -> bytes:
         data = b''
+        read_deadline = time.monotonic() + self.timeout
         while len(data) < count:
             if self.sock is None:
                 raise ConnectionError('Debugger connection closed')
-            remaining = self.timeout if self.deadline is None else self.deadline - time.monotonic()
+            limits = [read_deadline]
+            if self.deadline is not None:
+                limits.append(self.deadline)
+            if self._response_deadline is not None:
+                limits.append(self._response_deadline)
+            remaining = min(limits) - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError('Execution deadline exhausted')
             self.sock.settimeout(min(self.timeout, remaining))
+            if not select.select([self.sock], [], [], min(remaining, .02))[0]:
+                if (self.pending_command == 's' and self.interrupt_requested()
+                        and not self._interrupt_sent):
+                    # Raw RSP interrupt is out-of-band, not another command.
+                    self.sock.sendall(b'\x03')
+                    self._interrupt_sent = True
+                continue
             chunk = self.sock.recv(count - len(data))
             if not chunk:
                 raise ConnectionError('Debugger disconnected')
@@ -44,6 +62,18 @@ class RspClient:
         return data
 
     def command(self, command: str) -> str:
+        if self.pending_command is not None:
+            raise ValueError('A debugger request is still outstanding')
+        self.pending_command = command
+        self._interrupt_sent = False
+        self._response_deadline = time.monotonic() + self.timeout
+        try:
+            return self._command(command)
+        finally:
+            self.pending_command = None
+            self._response_deadline = None
+
+    def _command(self, command: str) -> str:
         if self.sock is None:
             raise ConnectionError('Debugger connection closed')
         data = command.encode('ascii')

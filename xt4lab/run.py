@@ -4,7 +4,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import signal
 import tempfile
+import threading
 import time
 from .firmware import REPO, PreparedRun, profile_dict, read_regular, verify_prepared
 from .rsp import RspClient
@@ -81,7 +83,8 @@ class RunSession:
             '-gdb','chardev:xt4gdb']
         self._stderr = (self.segment_dir / 'engine-stderr.log').open('xb')
         self.process = subprocess.Popen(self.argv, cwd=REPO, stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=self._stderr, umask=0o077)
+            stdout=subprocess.DEVNULL, stderr=self._stderr, umask=0o077,
+            start_new_session=True)
         deadline = time.monotonic() + 2
         while not self.socket_path.exists():
             if self.process.poll() is not None:
@@ -99,6 +102,7 @@ class RunSession:
         self.completed_steps = self.attempted_steps = 0
         self.stop = None
         self.paused = False
+        self.client.interrupt_requested = lambda: self.paused
         self._record({'event':'start', 'registers':registers, 'argv':self.argv,
                        'engine_events':str(self.segment_dir.relative_to(self.prepared.directory) / 'engine-events.jsonl')})
 
@@ -120,6 +124,29 @@ class RunSession:
         return None
 
     def step(self) -> dict:
+        self.paused = False
+        return self._perform_step()
+
+    def _perform_step(self) -> dict:
+        # Keep the packet parser on its stack when SIGINT arrives. The handler
+        # only requests a pause; RSP polling interrupts execution and drains its
+        # stop reply. This also protects partially received ordinary packets.
+        main_thread = threading.current_thread() is threading.main_thread()
+        previous = None
+        if main_thread:
+            previous = signal.signal(signal.SIGINT, lambda *_: setattr(self, 'paused', True))
+        try:
+            return self._step_impl()
+        finally:
+            if main_thread:
+                signal.signal(signal.SIGINT, previous)
+
+    def _paused_result(self):
+        self._record({'event':'pause','completed_steps':self.completed_steps})
+        return {'reason':'paused','completed_steps':self.completed_steps,
+                'attempted_steps':self.attempted_steps}
+
+    def _step_impl(self) -> dict:
         if self.closed:
             raise ValueError('Session closed')
         if self.stop:
@@ -132,6 +159,8 @@ class RunSession:
             return self._finish('timeout')
         try:
             registers = self.client.registers()
+            if self.paused:
+                return self._paused_result()
             pc = registers['pc']
             try:
                 raw = self.client.read_memory(pc,4).hex()
@@ -146,10 +175,18 @@ class RunSession:
                 return self._finish(**fault)
             if reply.exited:
                 return self._finish('engine_crash',exit_code=reply.exit_code)
+            if reply.signal == 2 and self.paused:
+                # An interrupted step is not an acknowledged completion.
+                # Preserve the uncertainty rather than guessing retirement.
+                self._record({'event':'interrupted-step','pc':pc,'bytes':raw,
+                              'confirmed_completion':False})
+                return self._paused_result()
             if reply.signal != 5:
                 return self._finish('unexpected_exception',signal=reply.signal)
             self.completed_steps += 1
             self._record({'event':'instruction','pc':pc,'bytes':raw,'core':0})
+            if self.paused:
+                return self._paused_result()
             return {'reason':'step','completed_steps':self.completed_steps,
                     'attempted_steps':self.attempted_steps}
         except TimeoutError:
@@ -169,7 +206,7 @@ class RunSession:
             for _ in range(count):
                 if self.paused:
                     break
-                result = self.step()
+                result = self._perform_step()
                 if result['reason'] != 'step':
                     break
             if not self.stop and self.completed_steps >= self.budget:

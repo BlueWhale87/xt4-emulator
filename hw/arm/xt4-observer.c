@@ -48,6 +48,15 @@ static void xt4_interrupt(CPUState *cs)
                        cs->exception_index == EXCP_PREFETCH_ABORT,
         .exception = cs->exception_index,
     };
+    /* SVC/HVC/SMC enter the dispatcher with the architectural return PC.
+     * Report the trapping instruction separately; never change guest state.
+     */
+    if (cs->exception_index == EXCP_SWI || cs->exception_index == EXCP_HVC ||
+        cs->exception_index == EXCP_SMC) {
+        unsigned length = cs->exception_index == EXCP_SWI && cpu->env.thumb ? 2 : 4;
+        stop.has_origin_pc = true;
+        stop.origin_pc = cpu->env.regs[15] - length;
+    }
     xt4_record_stop(XT4_CPU(cs)->board, cs, &stop);
     cs->stopped = true;
     qemu_system_debug_request();

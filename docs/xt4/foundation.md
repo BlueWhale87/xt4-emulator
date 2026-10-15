@@ -30,6 +30,8 @@ The CLI resolves the research root to its canonical project path. It writes an e
 
 Add `--interactive` for `step`, `continue N`, `pause`, `reset`, and `quit`. Ctrl-C during a run requests a pause. Reset launches a fresh engine and evidence segment without discarding earlier records. The default instruction budget is 1000, maximum 1000000; response waits are at most two seconds and each execution segment has a 30-second deadline. A terminal dependency or failure requires reset before further execution.
 
+Pausing interrupts any running debugger step and consumes its reply before resuming. Interrupts during packet receipt wait for that packet to finish. An interrupted execution attempt is recorded with uncertain completion and excluded from the confirmed instruction count; it is never silently counted as a completed step.
+
 `--profile validation` intentionally refuses to execute with `missing_boot_state`: a real cold-boot/loader state has not been recovered. The diagnostic profile supplies a synthetic stack at `0x7fff0000`, SP=`0x80000000`, provisional starting registers and a single Cortex-A7 CPU. Zero initialization, RAM permissions and CPU reset system registers remain assumptions. GIC helper code is linked to satisfy QEMU's Arm TCG dependencies; no interrupt-controller device is instantiated or claimed as X-T4 hardware.
 
 ## Evidence and next work

@@ -89,6 +89,12 @@ static void fault_test(int which)
         code[4] = 0xe12fff10; /* bx r0: unmapped fetch */
     } else if (which == 3) {
         code[4] = 0xe7f000f0; /* udf */
+    } else if (which == 5) {
+        code[4] = 0xef000000; /* ARM svc #0 */
+    } else if (which == 6) {
+        code[2] = 0xe3010105; /* Thumb entry at ENTRY + 64 | 1 */
+        code[3] = 0xe3400129;
+        code[4] = 0xe12fff10;
     }
     for (int i = 0; i < G_N_ELEMENTS(code); i++) {
         qtest_writel(q, ENTRY + i * 4, code[i]);
@@ -101,6 +107,9 @@ static void fault_test(int which)
         }
     }
     qtest_writel(q, SENTINEL, 0);
+    if (which == 6) {
+        qtest_writel(q, ENTRY + 64, 0x6010df00); /* svc; str r0,[r2] */
+    }
     qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
     qtest_qmp_eventwait(q, "STOP");
     QDict *stop = stop_record(run);
@@ -121,8 +130,14 @@ static void fault_test(int which)
         }
     } else {
         g_assert_cmpstr(qdict_get_str(stop, "reason"), ==, "unexpected_exception");
-        if (which == 3) {
+        if (which == 3 || which == 5) {
             g_assert_cmphex(qdict_get_int(stop, "pc"), ==, ENTRY + 16);
+            if (which == 5) {
+                g_assert_cmphex(qdict_get_int(stop, "architectural_pc"), ==, ENTRY + 20);
+            }
+        } else if (which == 6) {
+            g_assert_cmphex(qdict_get_int(stop, "pc"), ==, ENTRY + 64);
+            g_assert_cmphex(qdict_get_int(stop, "architectural_pc"), ==, ENTRY + 66);
         } else {
             g_assert_cmpuint(qdict_get_int(stop, "pc"), >=, ENTRY + 16);
             g_assert_cmpuint(qdict_get_int(stop, "pc"), <=, ENTRY + 24);
@@ -137,6 +152,8 @@ static void write_fault(void) { fault_test(1); }
 static void fetch_fault(void) { fault_test(2); }
 static void undefined_fault(void) { fault_test(3); }
 static void mmu_fault(void) { fault_test(4); }
+static void arm_svc(void) { fault_test(5); }
+static void thumb_svc(void) { fault_test(6); }
 
 int main(int argc, char **argv)
 {
@@ -147,5 +164,7 @@ int main(int argc, char **argv)
     qtest_add_func("/xt4/fault/fetch", fetch_fault);
     qtest_add_func("/xt4/fault/undefined", undefined_fault);
     qtest_add_func("/xt4/fault/mmu", mmu_fault);
+    qtest_add_func("/xt4/fault/arm-svc", arm_svc);
+    qtest_add_func("/xt4/fault/thumb-svc", thumb_svc);
     return g_test_run();
 }

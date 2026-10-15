@@ -48,6 +48,7 @@ def write_report(run_dir: Path) -> Path:
         'profile_sha256':info['provenance']['profile_sha256'],
         'engine_sha256':engine['binary_sha256'],'engine_source_base':engine['source_base'],
         'completed_steps':len(pcs),'completed_pcs':pcs,'stop':stop,
+        'interrupted_attempts':sum(e['event']=='interrupted-step' for e in events),
         'starting_states':reset_states,'canonical_trace':canonical,
         'canonical_trace_sha256':digest,'dependencies':dependencies,
         'evidence':['trace.jsonl','run-info.json','engine-build.json','segments/']}
@@ -59,6 +60,8 @@ def write_report(run_dir: Path) -> Path:
         'This is a module-entry diagnostic using a synthetic stack and provisional startup state. '
         'Full camera boot, menus and SD support remain unimplemented. No physical camera was accessed.','',
         '## Observed stop','']
+    if summary['interrupted_attempts']:
+        lines[5:5] = ['An interrupted step has uncertain completion; the count includes only confirmed single-step completions.', '']
     for key in ['pc','physical_address','virtual_address','width','access','value','attempted_steps','completed_steps']:
         if key in stop:
             value = stop[key]

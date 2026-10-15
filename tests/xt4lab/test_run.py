@@ -1,7 +1,10 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
+import signal
 import tempfile
+import threading
 import unittest
 from xt4lab.firmware import prepare_run
 
@@ -28,6 +31,7 @@ class RunTests(unittest.TestCase):
         self.assertIn('-nic',s.argv)
         self.assertFalse(any('tcp:' in token or 'usb-host' in token for token in s.argv))
         self.assertEqual(s.socket_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(os.getpgid(s.process.pid),s.process.pid)
         self.assertEqual(s.client.registers()['pc'], 0x012910c4)
         self.assertEqual(s.client.registers()['cpsr'] & 0x1ff, 0x1d3)
 
@@ -81,6 +85,45 @@ class RunTests(unittest.TestCase):
         from xt4lab.run import RunSession
         with self.assertRaises(ValueError):
             RunSession(None, Path('/usr/bin/true'))
+
+    def test_sigint_pauses_pending_execution_and_drains_reply(self):
+        s=self.session(timeout=.5)
+        self.assertEqual(s.client.command('M12910c4,4:03f020e3'),'OK')
+        timer=threading.Timer(.05,lambda:os.kill(os.getpid(),signal.SIGINT))
+        timer.start()
+        try:
+            result=s.continue_steps(1)
+        finally:
+            timer.join(1)
+        self.assertEqual(result['reason'],'paused')
+        # A usable pause must leave the protocol synchronized.
+        registers=s.client.registers()
+        self.assertIn('pc',registers)
+        # WFI still awaits a real modeled wake event. Reset is explicit; the
+        # debugger pause must not fabricate an interrupt to clear that state.
+        s.reset()
+        self.assertEqual(s.continue_steps(1)['reason'],'step')
+        trace=(s.prepared.directory/'trace.jsonl').read_text()
+        self.assertIn('interrupted-step',trace)
+
+    def test_sigint_during_packet_receipt_is_resumable(self):
+        s=self.session()
+        original=s.client.sock
+        class InterruptSocket:
+            fired=False
+            def __getattr__(self,name):
+                return getattr(original,name)
+            def recv(self,n):
+                data=original.recv(n)
+                if not self.fired:
+                    self.fired=True
+                    os.kill(os.getpid(),signal.SIGINT)
+                return data
+        s.client.sock=InterruptSocket()
+        self.assertEqual(s.continue_steps(1)['reason'],'paused')
+        self.assertEqual(s.completed_steps,0)
+        self.assertEqual(s.continue_steps(1)['reason'],'step')
+        self.assertEqual(s.completed_steps,1)
 
 
 if __name__ == '__main__':
