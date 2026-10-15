@@ -7,6 +7,8 @@
 #include "hw/timer/xt4-timer.h"
 #include "target/arm/cpu.h"
 #include "system/memory.h"
+#include "system/runstate.h"
+#include "qemu/timer.h"
 
 #define TYPE_XT4_MACHINE MACHINE_TYPE_NAME("fujifilm-xt4")
 #define TYPE_XT4_CPU ARM_CPU_TYPE_NAME("xt4-cortex-a7")
@@ -50,6 +52,11 @@ struct XT4State {
     uint64_t pending_value;
     uint64_t pending_address;
     unsigned pending_width;
+    uint64_t instruction_budget;
+    int64_t instruction_baseline;
+    uint64_t execution_sequence;
+    QEMUTimer *budget_timer;
+    VMChangeStateEntry *execution_handler;
 };
 
 void xt4_record_stop(XT4State *s, CPUState *cpu, const XT4Stop *stop);

@@ -13,6 +13,32 @@ QEMU = REPO / 'build/qemu-system-arm'
 
 
 class BoardTests(unittest.TestCase):
+    def test_bounded_execution_requires_precise_clock(self):
+        with tempfile.TemporaryDirectory(dir=REPO / 'runs') as tmp:
+            for index, args in enumerate([[], ['-icount', 'shift=1'],
+                                          ['-icount', 'shift=auto']]):
+                with self.subTest(args=args):
+                    run = prepare_run(RESEARCH, Path(tmp) / str(index), 'bootstrap-entry-diagnostic')
+                    result = subprocess.run([str(QEMU), '-machine', 'fujifilm-xt4,run-dir=' +
+                        str(run.directory) + ',instruction-budget=100', '-display', 'none',
+                        '-nodefaults', '-nic', 'none', '-accel', 'tcg,thread=single', '-S', *args],
+                        capture_output=True, text=True, timeout=3)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('precise one-nanosecond icount', result.stderr)
+                    self.assertFalse((run.directory / 'engine-events.jsonl').exists())
+
+    def test_bounded_execution_rejects_invalid_budget(self):
+        with tempfile.TemporaryDirectory(dir=REPO / 'runs') as tmp:
+            for index, value in enumerate(['-1', '1.0', '1000000001']):
+                with self.subTest(value=value):
+                    run = prepare_run(RESEARCH, Path(tmp) / str(index), 'bootstrap-entry-diagnostic')
+                    result = subprocess.run([str(QEMU), '-machine', 'fujifilm-xt4,run-dir=' +
+                        str(run.directory) + ',instruction-budget=' + value, '-display', 'none',
+                        '-nodefaults', '-S', '-icount', 'shift=0'], capture_output=True,
+                        text=True, timeout=3)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse((run.directory / 'engine-events.jsonl').exists())
+
     def test_machine_available(self):
         result = subprocess.run([str(QEMU), '-machine', 'help'], capture_output=True,
                                 text=True, timeout=3, check=True)

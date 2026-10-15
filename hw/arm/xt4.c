@@ -5,6 +5,7 @@
 #include "hw/arm/xt4.h"
 #include "hw/arm/machines-qom.h"
 #include "qapi/error.h"
+#include "qapi/visitor.h"
 #include "qemu/error-report.h"
 #include "qemu/module.h"
 #include "qobject/qdict.h"
@@ -147,6 +148,82 @@ void xt4_record_stop(XT4State *s, CPUState *cs, const XT4Stop *stop)
         qdict_put_null(event, "width");
     }
     qdict_put_int(event, "exception", stop->exception);
+    emit(s, event);
+}
+
+static void execution_stop(XT4State *s, const char *reason)
+{
+    XT4Stop stop = { .reason = reason, .access = "execution" };
+    xt4_record_stop(s, CPU(s->cpu), &stop);
+    qemu_system_debug_request();
+    cpu_stop_current();
+}
+
+static void arm_execution_budget(XT4State *s, int64_t remaining)
+{
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    if (now < 0 || remaining <= 0 || remaining > INT64_MAX - now) {
+        /* An enabled, unwired architectural timer can warp idle time all the
+         * way to INT64_MAX, then rearm itself at that same timestamp forever.
+         * Quiesce host timer callbacks at this terminal unsupported boundary;
+         * no guest-visible timer register or IRQ result is supplied. Reset is
+         * required before any supported continuation. */
+        ARMCPU *cpu = ARM_CPU(s->cpu);
+        for (int i = 0; i < G_N_ELEMENTS(cpu->gt_timer); i++) {
+            timer_del(cpu->gt_timer[i]);
+        }
+        execution_stop(s, "unsupported_execution_deadline");
+        return;
+    }
+    timer_mod_ns(s->budget_timer, now + remaining);
+}
+
+static void execution_budget(void *opaque)
+{
+    XT4State *s = opaque;
+    if (s->stopped) {
+        return;
+    }
+    /* Timer callbacks are an I/O-safe boundary. Arbitrary translated-fault
+     * hooks are not: raw accounting for those stops is sampled below. */
+    int64_t used = icount_get_raw() - s->instruction_baseline;
+    if (used < 0 || used > s->instruction_budget) {
+        execution_stop(s, "execution_budget_invariant");
+    } else if (used == s->instruction_budget) {
+        execution_stop(s, "instruction_budget");
+    } else {
+        /* A non-external device deadline may have driven idle-time warp.
+         * Virtual nanoseconds do not constitute executed instructions. */
+        QDict *event = qdict_new();
+        qdict_put_str(event, "event", "execution-budget-rearm");
+        qdict_put_int(event, "engine_instruction_count", used);
+        qdict_put_int(event, "virtual_ns", qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+        qdict_put_int(event, "remaining", s->instruction_budget - used);
+        emit(s, event);
+        arm_execution_budget(s, s->instruction_budget - used);
+    }
+}
+
+static void execution_state(void *opaque, bool running, RunState state)
+{
+    XT4State *s = opaque;
+    if (running) {
+        return;
+    }
+    /* VM state callbacks run after vCPUs pause and TCG unwinds its count.
+     * Priority1 runs before the default-priority GDB stop reply. */
+    int64_t raw = icount_get_raw();
+    QDict *event = qdict_new();
+    qdict_put_str(event, "event", "execution-state");
+    qdict_put_str(event, "state", RunState_str(state));
+    qdict_put_bool(event, "running", false);
+    qdict_put_int(event, "sequence", ++s->execution_sequence);
+    qdict_put_int(event, "engine_instruction_count", raw - s->instruction_baseline);
+    qdict_put_int(event, "raw_icount", raw);
+    qdict_put_int(event, "virtual_ns", qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+    qdict_put_int(event, "pc", ARM_CPU(s->cpu)->env.regs[15]);
+    qdict_put_int(event, "instruction_budget", s->instruction_budget);
+    qdict_put_str(event, "count_semantics", "qemu-raw-icount-not-retired");
     emit(s, event);
 }
 
@@ -334,6 +411,19 @@ static void reset(void *opaque)
     }
     qdict_put_obj(event, "registers", QOBJECT(registers));
     emit(s, event);
+    if (s->instruction_budget) {
+        timer_del(s->budget_timer);
+        s->instruction_baseline = icount_get_raw();
+        s->execution_sequence = 0;
+        QDict *policy = qdict_new();
+        qdict_put_str(policy, "event", "execution-policy");
+        qdict_put_str(policy, "mode", "bounded-continue");
+        qdict_put_int(policy, "instruction_budget", s->instruction_budget);
+        qdict_put_int(policy, "raw_icount_baseline", s->instruction_baseline);
+        qdict_put_str(policy, "count_semantics", "qemu-raw-icount-not-retired");
+        emit(s, policy);
+        arm_execution_budget(s, s->instruction_budget);
+    }
 }
 
 static bool scenario_number(QDict *dict, const char *name, uint64_t expected)
@@ -487,6 +577,10 @@ static const XT4ProfileDefinition *validate_profile(int dir, XT4State *s)
 static void init(MachineState *machine)
 {
     XT4State *s = XT4_MACHINE(machine);
+    if (s->instruction_budget && (qtest_enabled() ||
+        icount_enabled() != ICOUNT_PRECISE || icount_to_ns(1) != 1)) {
+        invalid("bounded execution requires precise one-nanosecond icount and TCG");
+    }
     char canonical[PATH_MAX];
     if (!s->run_dir || !realpath(s->run_dir, canonical) ||
         strcmp(canonical, s->run_dir)) {
@@ -556,7 +650,47 @@ static void init(MachineState *machine)
     s->cpu = XT4_CPU(object_new(TYPE_XT4_CPU));
     s->cpu->board = s;
     qdev_realize(DEVICE(s->cpu), NULL, &error_fatal);
+    if (s->instruction_budget) {
+        s->budget_timer = timer_new_full(NULL, QEMU_CLOCK_VIRTUAL, SCALE_NS,
+            QEMU_TIMER_ATTR_EXTERNAL, execution_budget, s);
+        s->execution_handler = qemu_add_vm_change_state_handler_prio(
+            execution_state, s, 1);
+    }
     qemu_register_reset(reset, s);
+}
+
+static void get_instruction_budget(Object *obj, Visitor *v, const char *name,
+                                    void *opaque, Error **errp)
+{
+    uint64_t value = XT4_MACHINE(obj)->instruction_budget;
+    visit_type_uint64(v, name, &value, errp);
+}
+
+static void set_instruction_budget(Object *obj, Visitor *v, const char *name,
+                                    void *opaque, Error **errp)
+{
+    XT4State *s = XT4_MACHINE(obj);
+    uint64_t value;
+    if (!visit_type_uint64(v, name, &value, errp)) {
+        return;
+    }
+    if (s->cpu || value > 1000000000) {
+        error_setg(errp, "instruction budget is initialization-only, range0..1000000000");
+        return;
+    }
+    s->instruction_budget = value;
+}
+
+static void xt4_finalize(Object *obj)
+{
+    XT4State *s = XT4_MACHINE(obj);
+    if (s->execution_handler) {
+        qemu_del_vm_change_state_handler(s->execution_handler);
+    }
+    if (s->budget_timer) {
+        timer_del(s->budget_timer);
+        timer_free(s->budget_timer);
+    }
 }
 
 static char *get_run_dir(Object *obj, Error **errp)
@@ -585,11 +719,14 @@ static void class_init(ObjectClass *oc, const void *data)
     mc->auto_create_sdcard = false;
     mc->ignore_memory_transaction_failures = false;
     object_class_property_add_str(oc, "run-dir", get_run_dir, set_run_dir);
+    object_class_property_add(oc, "instruction-budget", "uint64",
+        get_instruction_budget, set_instruction_budget, NULL, NULL);
 }
 
 static const TypeInfo xt4_types[] = {{
     .name = TYPE_XT4_MACHINE, .parent = TYPE_MACHINE,
     .instance_size = sizeof(XT4State), .class_init = class_init,
+    .instance_finalize = xt4_finalize,
     .interfaces = arm_machine_interfaces,
 }};
 DEFINE_TYPES(xt4_types)

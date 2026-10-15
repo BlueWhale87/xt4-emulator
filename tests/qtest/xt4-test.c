@@ -48,6 +48,36 @@ static QTestState *start(const char *run, bool tcg)
                        quoted, tcg ? "-accel tcg,thread=single" : "");
 }
 
+static QTestState *start_budget(const char *run, uint64_t budget)
+{
+    g_autofree char *quoted = g_shell_quote(run);
+    return qtest_initf("-machine fujifilm-xt4,run-dir=%s,instruction-budget=%" PRIu64
+                      " -nodefaults -nic none -S -accel tcg,thread=single"
+                      " -icount shift=0,align=off,sleep=off", quoted, budget);
+}
+
+static QDict *execution_record(const char *run)
+{
+    g_autofree char *path = g_build_filename(run, "engine-events.jsonl", NULL);
+    g_autofree char *text = NULL;
+    g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
+    g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+    QDict *last = NULL;
+    for (int i = 0; lines[i] && *lines[i]; i++) {
+        QDict *event = qobject_to(QDict, qobject_from_json(lines[i], NULL));
+        if (!g_strcmp0(qdict_get_try_str(event, "event"), "execution-state")) {
+            if (last) {
+                qobject_unref(last);
+            }
+            last = event;
+        } else {
+            qobject_unref(event);
+        }
+    }
+    g_assert_nonnull(last);
+    return last;
+}
+
 static QDict *stop_record(const char *run)
 {
     g_autofree char *path = g_build_filename(run, "engine-events.jsonl", NULL);
@@ -117,10 +147,10 @@ static void test_xt4_bootstrap_memory_reset(void)
     qtest_quit(q);
 }
 
-static void fault_test(int which)
+static void fault_test_mode(int which, bool bounded)
 {
     g_autofree char *run = new_fixture();
-    QTestState *q = start(run, true);
+    QTestState *q = bounded ? start_budget(run, 100) : start(run, true);
     uint32_t code[] = {0xe3022000, 0xe3402102, /* r2 = sentinel */
                        0xe3000008, 0xe34000e2, /* r0 = unknown address */
                        0xe5d01000, 0xe5820000, 0xeafffffe};
@@ -184,8 +214,158 @@ static void fault_test(int which)
             g_assert_cmpuint(qdict_get_int(stop, "pc"), <=, ENTRY + 24);
         }
     }
+    if (bounded) {
+        QDict *accounting = execution_record(run);
+        g_assert_cmpint(qdict_get_int(accounting, "engine_instruction_count"), >=, 0);
+        g_assert_cmpint(qdict_get_int(accounting, "engine_instruction_count"), <, 100);
+        qobject_unref(accounting);
+    }
     qobject_unref(stop);
     qtest_quit(q);
+}
+
+static void fault_test(int which) { fault_test_mode(which, false); }
+
+static void budget_strict_faults(void)
+{
+    for (int i = 0; i < 7; i++) {
+        fault_test_mode(i, true);
+    }
+}
+
+static void budget_exact(void)
+{
+    const unsigned budgets[] = {1, 2, 3, 4, 5, 63, 65535, 65536, 65537, 1000003};
+    for (int i = 0; i < G_N_ELEMENTS(budgets); i++) {
+        unsigned n = budgets[i];
+        g_autofree char *run = new_fixture_profile("bootstrap-entry-diagnostic");
+        QTestState *q = start_budget(run, n);
+        const uint32_t code[] = {0xe3a00000, 0xe3012000, /* mov r0,0; movw r2,1000 */
+                                 0xe2800001, 0xe5820000, 0xeafffffc};
+        for (int j = 0; j < G_N_ELEMENTS(code); j++) {
+            qtest_writel(q, j * 4, code[j]);
+        }
+        qtest_writel(q, 0x1000, 0);
+        qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+        qtest_qmp_eventwait(q, "STOP");
+        QDict *stop = stop_record(run);
+        QDict *accounting = execution_record(run);
+        g_assert_cmpstr(qdict_get_str(stop, "reason"), ==, "instruction_budget");
+        g_assert_cmpint(qdict_get_int(accounting, "engine_instruction_count"), ==, n);
+        g_assert_false(qdict_get_bool(accounting, "running"));
+        g_assert_cmphex(qdict_get_int(stop, "pc"), ==,
+                       n == 1 ? 4 : 8 + ((n - 2) % 3) * 4);
+        g_assert_cmpuint(qtest_readl(q, 0x1000), ==, (n - 1) / 3);
+        g_assert_true(qdict_haskey(stop, "value"));
+        g_assert_false(qdict_haskey(stop, "device"));
+        if (i == 0) {
+            QDict *mutation = qtest_qmp(q, "{ 'execute': 'qom-set', 'arguments': {"
+                "'path': '/machine', 'property': 'instruction-budget', 'value': 1000 } }");
+            g_assert_true(qdict_haskey(mutation, "error"));
+            qobject_unref(mutation);
+        }
+        qobject_unref(accounting);
+        qobject_unref(stop);
+        qtest_quit(q);
+    }
+}
+
+static void budget_pause_reset_idle_warp(void)
+{
+    g_autofree char *run = new_fixture_profile("bootstrap-entry-diagnostic");
+    QTestState *q = start_budget(run, 100);
+    /* Architectural physical timer drives idle warp, but has no wired IRQ.
+     * All snippets are test-only anonymous RAM, never firmware file changes. */
+    const uint32_t code[] = {0xe3a00064, 0xee0e0f12, /* TVAL=100 */
+                            0xe3a00001, 0xee0e0f32, /* CTL=enable */
+                            0xe320f003, 0xeafffffd}; /* WFI; repeat WFI */
+    for (int j = 0; j < G_N_ELEMENTS(code); j++) {
+        qtest_writel(q, j * 4, code[j]);
+    }
+    qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+    qtest_qmp_eventwait(q, "STOP");
+    /* The unwired generic timer eventually schedules its rollover at
+     * INT64_MAX. This must stop cleanly as an unsupported clock boundary,
+     * never invent 100 executed instructions or spin in timer delivery. */
+    QDict *boundary = stop_record(run);
+    g_assert_cmpstr(qdict_get_str(boundary, "reason"), ==, "unsupported_execution_deadline");
+    qobject_unref(boundary);
+    QDict *first = execution_record(run);
+    int64_t count = qdict_get_int(first, "engine_instruction_count");
+    g_assert_cmpint(count, >, 0);
+    g_assert_cmpint(count, <, 100);
+    g_assert_cmpint(qdict_get_int(first, "virtual_ns"), >, count);
+    qobject_unref(first);
+    /* A warm system reset does not rewind QEMU's global icount clock.
+     * Like RunSession.reset(), use a fresh engine after clock exhaustion. */
+    qtest_quit(q);
+    g_free(run);
+    run = new_fixture_profile("bootstrap-entry-diagnostic");
+    q = start_budget(run, 100);
+    qtest_writel(q, 0, 0xe320f003); /* WFI without any wake source */
+    qtest_writel(q, 4, 0xeafffffe);
+    qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+    g_usleep(20000);
+    qtest_qmp_assert_success(q, "{ 'execute': 'stop' }");
+    qtest_qmp_eventwait(q, "STOP");
+    QDict *second = execution_record(run);
+    count = qdict_get_int(second, "engine_instruction_count");
+    g_assert_cmpint(count, >, 0);
+    g_assert_cmpint(count, <, 100);
+    qobject_unref(second);
+    g_usleep(20000);
+    qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+    g_usleep(20000);
+    qtest_qmp_assert_success(q, "{ 'execute': 'stop' }");
+    qtest_qmp_eventwait(q, "STOP");
+    second = execution_record(run);
+    g_assert_cmpint(qdict_get_int(second, "engine_instruction_count"), ==, count);
+    qobject_unref(second);
+    qtest_system_reset(q);
+    /* Reset must discard the old baseline/budget and original bytes restore. */
+    qtest_writel(q, 0, 0xeafffffe); /* b . */
+    qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+    qtest_qmp_eventwait(q, "STOP");
+    QDict *last = execution_record(run);
+    g_assert_cmpint(qdict_get_int(last, "engine_instruction_count"), ==, 100);
+    qobject_unref(last);
+    qtest_quit(q);
+}
+
+static void budget_timer_order(void)
+{
+    for (int budget = 46; budget <= 48; budget++) {
+        g_autofree char *run = new_fixture_scenario("bootstrap-timer-exploration", "zero-ports-v1");
+        QTestState *q = start_budget(run, budget);
+        const uint32_t code[] = {0xe3012000, 0xe3a00002,
+            0xe30c1310, 0xe34f1ff3, 0xe5810000, 0xe3000001,
+            0xe3400001, 0xe2411010, 0xe5810000};
+        for (int j = 0; j < G_N_ELEMENTS(code); j++) {
+            qtest_writel(q, j * 4, code[j]);
+        }
+        for (int j = 9; j < 65; j++) {
+            qtest_writel(q, j * 4, 0xe1a00000); /* nop */
+        }
+        qtest_writel(q, 65 * 4, 0xe5820000); /* forbidden later sentinel */
+        qtest_writel(q, 0x1000, 0);
+        qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+        qtest_qmp_eventwait(q, "STOP");
+        QDict *stop = stop_record(run);
+        QDict *accounting = execution_record(run);
+        g_assert_cmpint(qdict_get_int(accounting, "engine_instruction_count"), ==, MIN(budget, 47));
+        if (budget == 46) {
+            g_assert_cmpstr(qdict_get_str(stop, "reason"), ==, "instruction_budget");
+        } else if (budget == 48) {
+            g_assert_cmpstr(qdict_get_str(stop, "reason"), ==, "unsupported_device_transition");
+        } else {
+            g_assert_true(!strcmp(qdict_get_str(stop, "reason"), "instruction_budget") ||
+                          !strcmp(qdict_get_str(stop, "reason"), "unsupported_device_transition"));
+        }
+        g_assert_cmpuint(qtest_readl(q, 0x1000), ==, 0);
+        qobject_unref(accounting);
+        qobject_unref(stop);
+        qtest_quit(q);
+    }
 }
 
 static void read_fault(void) { fault_test(0); }
@@ -710,5 +890,9 @@ int main(int argc, char **argv)
     qtest_add_func("/xt4/timer/terminal", timer_terminal_boundary);
     qtest_add_func("/xt4/timer/wide-deadline", timer_wide_deadline);
     qtest_add_func("/xt4/timer/invalid", timer_invalid_operations);
+    qtest_add_func("/xt4/budget/exact", budget_exact);
+    qtest_add_func("/xt4/budget/faults", budget_strict_faults);
+    qtest_add_func("/xt4/budget/pause-reset-idle-warp", budget_pause_reset_idle_warp);
+    qtest_add_func("/xt4/budget/timer-order", budget_timer_order);
     return g_test_run();
 }
