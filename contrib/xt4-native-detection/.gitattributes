@@ -1,0 +1,5 @@
+# Raw image fixtures are bytes, never line-oriented text.
+*.bgr binary
+*.png binary
+# Preserve the pinned upstream reference byte for byte, including whitespace.
+vendor/libfacedetection/** -whitespace

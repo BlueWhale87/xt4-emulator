@@ -1,0 +1,37 @@
+--- float/facedetectcnn-model.cpp
++++ traced/facedetectcnn-model.cpp
+@@ -38,6 +38,7 @@
+ 
+ 
+ #include "facedetectcnn.h"
++extern void xt4_ref_trace(const char*, const CDataBlob<float>&);
+ 
+ 
+ #if 0
+@@ -83,6 +84,7 @@
+     /***************CONV0*********************/
+     TIME_START;
+     fx = convolution(fx, g_pFilters[0]);
++    xt4_ref_trace("early", fx);
+     TIME_END("conv_head");
+ 
+     TIME_START;
+@@ -110,6 +112,7 @@
+ 
+     TIME_START;
+     auto fb1 = convolution4layerUnit(fx, g_pFilters[11], g_pFilters[12], g_pFilters[13], g_pFilters[14]);
++    xt4_ref_trace("middle", fb1);
+     TIME_END("conv3");
+ 
+     /***************CONV4*********************/
+@@ -192,6 +195,10 @@
+ 
+     sigmoid(cls);
+     sigmoid(obj);
++    xt4_ref_trace("cls", cls);
++    xt4_ref_trace("reg", reg);
++    xt4_ref_trace("kps", kps);
++    xt4_ref_trace("obj", obj);
+     TIME_END("decode")
+ 
+     TIME_START;

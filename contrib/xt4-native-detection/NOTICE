@@ -1,0 +1,12 @@
+The native graph adaptation, reference implementation and FP32 coefficients derive
+from libfacedetection, upstream commit acf7b254121927e7dced30e233a2e03119f28ea2.
+Copyright and BSD 3-clause terms are retained in vendor/libfacedetection/LICENSE
+and in the original upstream files. Preserve those notices with redistributions.
+
+The emulator repository's original licensing files and individual-file notices
+remain applicable. No Fujifilm firmware or decoded vendor binary is included.
+
+The astronaut image is the NASA Eileen Collins sample retained by the native
+experiment. Derived fixture generation and source identity are recorded in
+tests/fixtures/manifest.json. Its limited face set is a correctness fixture,
+not a general accuracy benchmark.

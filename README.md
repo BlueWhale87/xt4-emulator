@@ -8,6 +8,8 @@ The project runs entirely on the host. Its runner exposes no camera connection, 
 
 ## Start here
 
+- [Native face detector and host box tests](contrib/xt4-native-detection/README.md)
+- [Preview/overlay hook readiness](docs/xt4/preview-overlay-readiness.md)
 - [Build, firmware preparation and testing](docs/xt4/public-setup.md)
 - [Diagnostic runner, evidence and limitations](docs/xt4/foundation.md)
 - [Startup investigation](docs/xt4/startup.md)

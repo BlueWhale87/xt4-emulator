@@ -1,0 +1,124 @@
+{
+  "purpose": "Static firmware investigation address inventory, not executable hook bindings",
+  "status": "all candidates disabled; no live execution",
+  "firmware_version": "X-T4 2.12",
+  "firmware_sha256": "853d273b5603d3a2b93493f0ebd6a762b0b4b6bdc70317777775ae5f8ed93bc5",
+  "analysis_elf_sha256": "2de7f18409a5a4a96f5da2b3b4e76022f81040f3ba573146bb62922f31c08249",
+  "address_space": "Derived analysis virtual address; not DAT offsets; runtime mapping unverified",
+  "candidates": [
+    {
+      "label": "picture_address_setter",
+      "address": "0x122c624",
+      "observation": "Derived PIC address-field setter, layer 0 or 1; ctx+0xd4+layer*8.",
+      "limitation": "Address value is not yet a frame lease.",
+      "enabled": false,
+      "evidence_id": "ev_52249738b3dab06ccd009da6b1cc37e9afa92575252fd6a87104199c90bd5196"
+    },
+    {
+      "label": "picture_address_getter",
+      "address": "0x122c6a0",
+      "observation": "Reads ctx+0xd4+layer*8 into caller output, rejects layer >=2.",
+      "limitation": "Pixel format, stride, producer ownership and cache coherency unknown.",
+      "enabled": false,
+      "evidence_id": "ev_70689a5813d7775a8dd1e03d73a063061420f180180c4c856f44e4e671f603ee"
+    },
+    {
+      "label": "picture_getter_wrapper",
+      "address": "0x121a440",
+      "observation": "Validates nonzero handle/output and layer, resolves display context, calls 0x122c6a0.",
+      "limitation": "Logical display handle and active preview layer need runtime confirmation.",
+      "enabled": false,
+      "evidence_id": "ev_373e30f5209e0e93493af99253921c5bf1e081cc7c05da72cb76098743fb3e6e"
+    },
+    {
+      "label": "picture_setter_wrapper",
+      "address": "0x1219fdc",
+      "observation": "Validates handle/layer/address and calls 0x122c624.",
+      "limitation": "Writes display state; observation breakpoint only initially.",
+      "enabled": false,
+      "evidence_id": "ev_c3076417556bda46f4c3eb67a664adf1a14473fe4809d4ef5ec79375fa928657"
+    },
+    {
+      "label": "picture_dump_candidate",
+      "address": "0x121c49c",
+      "observation": "Reads PIC parameters/address, passes width*stride-like field*2 bytes to file-output candidate.",
+      "limitation": "Diagnostic path writes files and waits; do not invoke for a read-only frame tap.",
+      "enabled": false,
+      "evidence_id": "ev_3419d3727257fa27eeb421aa177d66307da37f89e9451ddd430a8c2b15df3a68"
+    },
+    {
+      "label": "osd_address_setter",
+      "address": "0x122c5e0",
+      "observation": "Stores two caller values at ctx+0xc4 and ctx+0xcc.",
+      "limitation": "OSD versus PIC roles derived from caller chains; no live buffer confirmation.",
+      "enabled": false,
+      "evidence_id": "ev_b0d19e72024c0b136a936ee559468a3471ab4620e9a8151742c64ba251c347af"
+    },
+    {
+      "label": "osd_update",
+      "address": "0x1247120",
+      "observation": "Selects surfaces, renders objects, configures OSD, alternates index 0/1 and commits display update.",
+      "limitation": "Current task, locks, lifecycle and completion event require runtime tracing.",
+      "enabled": false,
+      "evidence_id": "ev_01d9000e8731ecdc6f16323d6eb35ab2a6c0d7c17dd77dbe213c315ddec6cc92"
+    },
+    {
+      "label": "osd_render",
+      "address": "0x124688c",
+      "observation": "Clears current surface, traverses objects via 0x1248930 and callback 0x1246a1c, flushes, calls 0x13baa88.",
+      "limitation": "Do not insert inference here; candidate observation point before completion only.",
+      "enabled": false,
+      "evidence_id": "ev_d6694e3522230368997692ca5d8fcf416f650268323f22f8351dd32fc8ce227c"
+    },
+    {
+      "label": "osd_configuration",
+      "address": "0x1246d4c",
+      "observation": "Routes descriptor+0x1c value through 0x121a028 into OSD fields; configures geometry and aligned width.",
+      "limitation": "Descriptor field interpretation and pixel format remain inferred.",
+      "enabled": false,
+      "evidence_id": "ev_f063c863ed94fdca655f030abfbb30af335fd7b886e90b3a7fbfdd3d5c5115db"
+    },
+    {
+      "label": "object_render",
+      "address": "0x1248bb8",
+      "observation": "OpenVG state/transform setup and draw-path loop, observed direct vgDrawPath call at 0x1248fe0.",
+      "limitation": "No validated registration path for a custom object; preserve complete graphics state.",
+      "enabled": false,
+      "evidence_id": "ev_97f8051209aad5d51b913635c00ef2cd584ca58ba7c87291f86a6417d5d5c246"
+    },
+    {
+      "label": "vguRect_export",
+      "address": "0x137b58c",
+      "observation": "Name/function lookup record at 0x173379c; implementation requires graphics context.",
+      "limitation": "Export availability is not an application render hook.",
+      "enabled": false,
+      "evidence_id": "ev_89370e93a0c28140980d58d5df0d9d8b76cd1cad3ea64fc7fa31013ebb430367"
+    },
+    {
+      "label": "make_current_internal_buffer",
+      "address": "0x13bd510",
+      "observation": "Named export; called by 0x1246f04 with 11-word attribute list terminated by 0x3038.",
+      "limitation": "Mutates current graphics context and may allocate; not a preview getter.",
+      "enabled": false,
+      "evidence_id": "ev_74aac6b0ecebfbd08bf2954d7233e570497a32f1829ccdf8ac68b4846919505f"
+    },
+    {
+      "label": "query_frame_rejected",
+      "address": "0x13b9eac",
+      "observation": "eglQueryFrameDMP accepts attribute 0x3fff, calls 0x13b7d44.",
+      "limitation": "Helper reads surface+0xa0 then clears it. Not a passive camera-preview getter.",
+      "enabled": false,
+      "evidence_id": "ev_72e4e26a41c2ecef857b4dcdef108b14390c247f5668422d2695971145263726"
+    }
+  ],
+  "unresolved": [
+    "Preview layer selection",
+    "Frame dimensions and stride",
+    "Exact pixel format and channel order",
+    "Producer completion, buffer lifetime, cache coherency",
+    "Graphics task and context ownership",
+    "Image-to-display crop, scale, mirror and rotation",
+    "Injection/loader and native ABI/runtime",
+    "Real camera inference timing and resource contention"
+  ]
+}

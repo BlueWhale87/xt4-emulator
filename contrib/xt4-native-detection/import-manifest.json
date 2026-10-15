@@ -1,0 +1,408 @@
+{
+  "source_commit": "90cc2ba639e0ba7451624579bb961d1738ec1400",
+  "scope": "Reviewed native face detector source and fixtures imported from the independent native repository; original camera bindings unavailable",
+  "original_files": [
+    {
+      "path": ".gitignore",
+      "sha256": "1e3390ce784c314ca3d4fbced6eeae2049264fca4b22aa3bcb891f3320f793b7"
+    },
+    {
+      "path": "CMakeLists.txt",
+      "sha256": "90b7cc8cadca3c175b8fca1be0b8a6a0dc588093ac376655ed58a98d1d56fb02"
+    },
+    {
+      "path": "CMakePresets.json",
+      "sha256": "3ecdc16ecb568b4252523e903e30df4f6d749e5e18c2bd754fac2a99200f8822"
+    },
+    {
+      "path": "arm/link.ld",
+      "sha256": "c9dec555ad6621ab1a79b29da143cb3a7f3d0e2e670af757047b3dcf61330dde"
+    },
+    {
+      "path": "arm/runtime.cpp",
+      "sha256": "6a3fda51a3506fb412e04f3e389952fe739cd675392aa8f294446a487b8fa5da"
+    },
+    {
+      "path": "arm/smoke_main.cpp",
+      "sha256": "298f78cab91f6bc45394b3ede1efa10b5365ea0d0a65d959c5bbbc95a276f94c"
+    },
+    {
+      "path": "arm/start.S",
+      "sha256": "c98c02fa4267dc88534a2a480828bffce0e55cf36eb4ce81f28dba0284d1b8ef"
+    },
+    {
+      "path": "cmake/arm-none-eabi.cmake",
+      "sha256": "bb052b7074912c1e01330c437bbb83ad4f6641b171bafbcf04b29e985b88344a"
+    },
+    {
+      "path": "docs/platform-contract.md",
+      "sha256": "61b2f17ed1b94a68ab37e33f627164af5d28baa6f9ff87d258552ff3eecb0688"
+    },
+    {
+      "path": "include/xt4_face.h",
+      "sha256": "7e68a726f83c2f9d948b1945b3856e3550428e5ce93b3e26e230c7d7412c452e"
+    },
+    {
+      "path": "include/xt4_overlay.h",
+      "sha256": "38b0eb0c96f55b8631ce0ed77d779c66683892a6771eb30e384bdccf9cb773c3"
+    },
+    {
+      "path": "include/xt4_pipeline.h",
+      "sha256": "39371e4339d9f1a4c0817de287b0c1e2f5058595057ca03e73e99d3974ea611c"
+    },
+    {
+      "path": "include/xt4_preview.h",
+      "sha256": "2c70cdd3774d5d50a72ea7c2b8d8741a1f2624e1ef82f9b336558ee66c570a49"
+    },
+    {
+      "path": "reference/float-reference.patch",
+      "sha256": "43e9348d8b9452dd27a730eac66c3480b2274e7b4f613196a90d3098f7010f28"
+    },
+    {
+      "path": "reference/layer_trace.patch",
+      "sha256": "0e8b3dd1ce7e6169cd7d268fe0bcb367f41b43267b050a58199390a0c49a6777"
+    },
+    {
+      "path": "src/arena.cpp",
+      "sha256": "c410156b22a5fd53ba0d855cc690e3cf915a1a7cfbe380ee8f8b9485d3cade05"
+    },
+    {
+      "path": "src/arena.hpp",
+      "sha256": "3e2b575b816eb8fb1129183d0db94fa9abe002680a0fb8ffa9fa29410d313a7b"
+    },
+    {
+      "path": "src/context.cpp",
+      "sha256": "5be279ad7762e4bdf766324110c77bd0cbfff2e7e87b3712ef6d61a68e05c67a"
+    },
+    {
+      "path": "src/context.hpp",
+      "sha256": "0f9e83aef0cc6bf152f87691760f865b2b17a4e80dd01239dad434f15cdf987e"
+    },
+    {
+      "path": "src/engine.cpp",
+      "sha256": "9bb3d8682b6edebee1861d89c8db0b8874376f403444c11497837e9e5b07d58a"
+    },
+    {
+      "path": "src/engine.hpp",
+      "sha256": "63525d0ef15dc3aa824f9996ece9c2bc167810eec5e96f45290afbb7e36a896b"
+    },
+    {
+      "path": "src/firmware_adapter.cpp",
+      "sha256": "c433ad7cff947266a7934957f4e8f5b0ce26c82e66f2816ce7a5af114edc4eaf"
+    },
+    {
+      "path": "src/geometry.cpp",
+      "sha256": "61ee7122f68d34baaebd3558fdf2fcb8dd37967b85ee0647c62b1cb7a4616976"
+    },
+    {
+      "path": "src/math.hpp",
+      "sha256": "cf305c6d9253c58e9673b7612f91457b3c22a04aed5a43b51625a7c24083a7ee"
+    },
+    {
+      "path": "src/model_data.cpp",
+      "sha256": "15e1c4d67361bd946f15cadaac26b1abbe933819355325e7a25d9a074b3caf37"
+    },
+    {
+      "path": "src/overlay.cpp",
+      "sha256": "a1b5b3c3a227f76ec85e33633e7a4d760305da2848870e6ca00df64c9b04e189"
+    },
+    {
+      "path": "src/pipeline.hpp",
+      "sha256": "6c99c1d0dfc08deebb1106e7b81041203968306f265a2a4b092d030bad2d0ca2"
+    },
+    {
+      "path": "src/postprocess.cpp",
+      "sha256": "fcaca015fd5f930c40a969ed76884c2ca11286b95d80bb3a25466261f9788262"
+    },
+    {
+      "path": "src/prepare.cpp",
+      "sha256": "6cee9f8334d2f3bf065e87bdbca0ac630bd1ea236ef8d7fbd61612b1c467950b"
+    },
+    {
+      "path": "src/result_exchange.cpp",
+      "sha256": "36792e6b8c91763cec9cdf6fc2f2d17ec06ea11bb121af5d99c62ff6fb463dce"
+    },
+    {
+      "path": "src/tensor.cpp",
+      "sha256": "46ab895b43f47038e82037ecd51fa1f58831343b59ae5fa3769361df6bd8348b"
+    },
+    {
+      "path": "src/tensor.hpp",
+      "sha256": "9d47ba76d00fa9ea5024c506750d48a60dab3a8439e603988c01e4a5d2752b65"
+    },
+    {
+      "path": "src/worker.cpp",
+      "sha256": "53272521d0d02a484e75c225c245234109f07447e43a37af6b22b90868c7d98a"
+    },
+    {
+      "path": "tests/api_test.cpp",
+      "sha256": "32e7e095c83df79b35a6485ef0413622d1036faf4b5547c3b4ae9fc0226539c9"
+    },
+    {
+      "path": "tests/arena_test.cpp",
+      "sha256": "0e4520f69ff590591c919e8e8c4a51eb8029606392d5ac8bd1074d442de72490"
+    },
+    {
+      "path": "tests/arm_audit_test.py",
+      "sha256": "886edfec683989d0c7e1d0d7c68525d900c3c47bc5c2c72ca0ebb59f17cfc212"
+    },
+    {
+      "path": "tests/arm_smoke_test.py",
+      "sha256": "5cfe4f51b072a2eb236a3536352eb8d060cfcba2e752a5704be52d8aca62b7d5"
+    },
+    {
+      "path": "tests/c_header_test.c",
+      "sha256": "e6ea9358069344b8880161572a944543fbfa0e76bfcf8b43e847140a28772265"
+    },
+    {
+      "path": "tests/engine_test.cpp",
+      "sha256": "325b07ee3beccf0eaac3b47a6b66faef09d3a75fd48a84baf652f1bd3e7ab98d"
+    },
+    {
+      "path": "tests/exchange_test.cpp",
+      "sha256": "a97f68ae7322d840101f63377f0028d77e41dff3fb690d487d33d86a4b91fe08"
+    },
+    {
+      "path": "tests/face_fixture.hpp",
+      "sha256": "43b8d0feea5949db94352756dd8ded5cf32a632330b04f11862e38aeb767b82d"
+    },
+    {
+      "path": "tests/firmware_adapter_test.cpp",
+      "sha256": "cc45692ce42bd2ff936fae4ac4eb2cf37ea6fc226c55c71458c6dac8e6792e1c"
+    },
+    {
+      "path": "tests/fixtures/astronaut.bgr",
+      "sha256": "36be9b24f8cddb757284b077f8ffdd554f53f4e2ada4cab07152acf340531f3a"
+    },
+    {
+      "path": "tests/fixtures/astronaut.png",
+      "sha256": "11f350f51b158b6a685a078f216f934c0d07bc240dc85952cb909ce889f19b6a"
+    },
+    {
+      "path": "tests/fixtures/astronaut.reference.json",
+      "sha256": "1824fd752057ed523bf7d03c9a72ba3b31fc79e8629054f7a6c52898940f260b"
+    },
+    {
+      "path": "tests/fixtures/astronaut.reference.png",
+      "sha256": "a2c75d5c00ce9511ad532ef98a5f16921ab0cad0fce266cd960fcec228baa7ab"
+    },
+    {
+      "path": "tests/fixtures/blank.bgr",
+      "sha256": "e2cc2a1fa6131cf4d86faa3baf78851f35a36853e2467c257b3df9d89e85cce5"
+    },
+    {
+      "path": "tests/fixtures/blank.png",
+      "sha256": "9cbc04e969dfcc3b5b50ab4ba6febcddc8969d34e315a70d46a89ac02e010690"
+    },
+    {
+      "path": "tests/fixtures/blank.reference.json",
+      "sha256": "577785e502d36a399e968e0478e66be2c96588ebe269140c55fb55f9ad7a62a0"
+    },
+    {
+      "path": "tests/fixtures/blank.reference.png",
+      "sha256": "9cbc04e969dfcc3b5b50ab4ba6febcddc8969d34e315a70d46a89ac02e010690"
+    },
+    {
+      "path": "tests/fixtures/crowd.bgr",
+      "sha256": "4cf2ada7371cfcb8841675fc406be40e5362a48bd8e4c0d7a406fa5590a45b09"
+    },
+    {
+      "path": "tests/fixtures/crowd.png",
+      "sha256": "469ef6a82224ce187114609085d6618366374d3d8e41f4a63be1155092c2711e"
+    },
+    {
+      "path": "tests/fixtures/crowd.reference.json",
+      "sha256": "02e4084f92e95fa93cfb7ece38492197ae2bc3e01b236e76b111b0daddfd7733"
+    },
+    {
+      "path": "tests/fixtures/crowd.reference.png",
+      "sha256": "6d7011df04fe761a9fac17e80fc36da13d4cd081a6fae764d7399ebda27efd91"
+    },
+    {
+      "path": "tests/fixtures/darkened.bgr",
+      "sha256": "04d8b24dd8ccc8d0a4483402d9efb6ec3a75224aa75298d3e5235e1f90193550"
+    },
+    {
+      "path": "tests/fixtures/darkened.png",
+      "sha256": "7010142019b2ea9e5da23a9f746448bb65d22d6a84694000e401e8de0876fb4f"
+    },
+    {
+      "path": "tests/fixtures/darkened.reference.json",
+      "sha256": "948e854878594055226720b460794f0e6197478692628895e82c4fddd43ac9a6"
+    },
+    {
+      "path": "tests/fixtures/darkened.reference.png",
+      "sha256": "7dd480d77686f71dcbd96abcd4427033ff58686e2101c106e30c902ee6400b28"
+    },
+    {
+      "path": "tests/fixtures/manifest.json",
+      "sha256": "c0cc02bc4d2424e9b0327af9fb0df401f56a321c69b253ce6777b021a96ffefd"
+    },
+    {
+      "path": "tests/fixtures/non-square.bgr",
+      "sha256": "79531e9b4324d64f5cf93eee0bc7f449d6fa7569d1b96bc940845f2ad52f8765"
+    },
+    {
+      "path": "tests/fixtures/non-square.png",
+      "sha256": "7523e2a34c347b053bbf28ccab319b6f3298deb9a1233ca3ddfc5c1575a53940"
+    },
+    {
+      "path": "tests/fixtures/non-square.reference.json",
+      "sha256": "880d5661518e38c3aa98b328735c13e2d2537ad67c46cb62b5fd995e99f8df0c"
+    },
+    {
+      "path": "tests/fixtures/non-square.reference.png",
+      "sha256": "2ab79cc7655f07c58c32882b98a360f971cc7cfdaa41edad1ea9b8e55404fd64"
+    },
+    {
+      "path": "tests/fixtures/translated.bgr",
+      "sha256": "40416664cd439559aba4b4b14754755a91446138158bfdbb843930b8fd3f1f8f"
+    },
+    {
+      "path": "tests/fixtures/translated.png",
+      "sha256": "97f196cb97084fbf590258f313b17e42fa8dd239bb1c50af4aa7c28b07e3368b"
+    },
+    {
+      "path": "tests/fixtures/translated.reference.json",
+      "sha256": "cb212ab8d4002ff534600ede7fa45a533d80f25db0e4378215c6132d4aae5f82"
+    },
+    {
+      "path": "tests/fixtures/translated.reference.png",
+      "sha256": "c2d1bc690405e0b800604a861c69485a1c3fb36008afb6be00656dd54d6c8eca"
+    },
+    {
+      "path": "tests/geometry_test.cpp",
+      "sha256": "903147acbb1432c7ef81c8ad4a1951fdb7d5c2c239688c96b7581e9fbc214d6c"
+    },
+    {
+      "path": "tests/no_heap.hpp",
+      "sha256": "9f4d15e12f53532008b253a5ffafbf4619aaf316f11d509d1a95d35b1772ac01"
+    },
+    {
+      "path": "tests/overlay_fixture.hpp",
+      "sha256": "fef9d0317c98d2e9bc63c2ff1298f990bd6299195be8f8c1a9e875782a04ea90"
+    },
+    {
+      "path": "tests/overlay_test.cpp",
+      "sha256": "86dbe42fb98e828e42acdab542946f28421878af4ea10240b8e43f2f17db5f0f"
+    },
+    {
+      "path": "tests/parity_test.cpp",
+      "sha256": "bfe6f080d622c9ba8279a49cd06db86c70ed2c9562a26317efa88a3d67287e7e"
+    },
+    {
+      "path": "tests/pipeline_fixture.hpp",
+      "sha256": "cc743bf7f401c6d2078210df0ff19be967a8f51c301233f748f884504c3aa4e6"
+    },
+    {
+      "path": "tests/postprocess_test.cpp",
+      "sha256": "3c141ebc4581eb768bf6e0c5f0fa0989fcac0c9dd04583d72a304f65162480a5"
+    },
+    {
+      "path": "tests/prepare_test.cpp",
+      "sha256": "a1fdd305a5fe48139b0fd1ad100fb696b4e84694a53e34d30511799827fd97ff"
+    },
+    {
+      "path": "tests/reference_test.cpp",
+      "sha256": "a8a4fd45469cb87b0b0b42e7a0e49acb31b4ce06d3d50958ea0aa00c58d4ea13"
+    },
+    {
+      "path": "tests/runner_test.cpp",
+      "sha256": "5d9482b07183042654926e369a1cc88955a39d84da042b2b7cca470dcbdd282f"
+    },
+    {
+      "path": "tests/test_support.hpp",
+      "sha256": "da29a9359fc16d7120fdae96d55128c5e29aa4e9d51030e058ec263b6a4b4368"
+    },
+    {
+      "path": "tests/worker_test.cpp",
+      "sha256": "76e444986e3c8e236c3a273e817ab58515cce3e0a422433ede1b83d5d384d0b9"
+    },
+    {
+      "path": "tools/binary_sizes.py",
+      "sha256": "68a3da4c9536ac62a48e57b98f3ab4ccdf18d24a4a35549796478aaf92f1b55d"
+    },
+    {
+      "path": "tools/build_identity.py",
+      "sha256": "27faa2a086278bc3d10898dae4c42cc5ceab6419a7e0b3cee7540fc1e45c41e3"
+    },
+    {
+      "path": "tools/check_arm.py",
+      "sha256": "423bf2fe20b03594d90b7b8204e5443d8e5362f3275fa949ba6bcbe084a26436"
+    },
+    {
+      "path": "tools/embed_fixtures.py",
+      "sha256": "476521aeb3f184507f1f448619d1fb7f2b203c9a89710fb28d1e07aa1e16326f"
+    },
+    {
+      "path": "tools/host_overlay.hpp",
+      "sha256": "cdc57ee252895eeccb51f57d22b08c855711c1099de6c578a2ae0f195c2d190a"
+    },
+    {
+      "path": "tools/prepare_fixtures.py",
+      "sha256": "89ba5a8d82db28a61814410943fecaaa23ee60d6e56b722d29b0336e57739255"
+    },
+    {
+      "path": "tools/prepare_reference.py",
+      "sha256": "adcede9fabc813f06d437f383610364220b05b6493e2a9cd88f09e87e8718778"
+    },
+    {
+      "path": "tools/reference_main.cpp",
+      "sha256": "c276aaeb8ce89c103c7b32530261e23203bb73e4e5bf71328c4e91da119510b6"
+    },
+    {
+      "path": "tools/report_json.cpp",
+      "sha256": "f2d626f83480f9aa27abcad844c15dc0fdb639d5c68b0be5b0971c4713dc9ffc"
+    },
+    {
+      "path": "tools/report_json.hpp",
+      "sha256": "b9db7438c2254840ea9550a1ceb56d9f9853bb4a0ec7afc9b3ad1a6075f7ccb8"
+    },
+    {
+      "path": "tools/run_arm_smoke.py",
+      "sha256": "b0b4a096af8411b83fb81bed25be66c33600797221ab89de2286d8b9714982e7"
+    },
+    {
+      "path": "tools/run_main.cpp",
+      "sha256": "117fdd3760200843732d6941bf626c17ffb43aa25c9a5d7bed78f226583c2586"
+    },
+    {
+      "path": "tools/toolchain-lock.json",
+      "sha256": "2730996fed053ee891146f35b1b9db833104b938d959cf2b487b2cd960f769e1"
+    },
+    {
+      "path": "vendor/libfacedetection/LICENSE",
+      "sha256": "95b286c39b1444594e18672e6092321e39cc11f2f1daf994cadfd95af7c91dcc"
+    },
+    {
+      "path": "vendor/libfacedetection/src/facedetectcnn-data.cpp",
+      "sha256": "cf019963f413528540d6de741e72eea4f2f0b572ca85b22dd4baa8fc71b42bb6"
+    },
+    {
+      "path": "vendor/libfacedetection/src/facedetectcnn-model.cpp",
+      "sha256": "0c5689b7070c070429a2c45eb3ae7f02018e492db94b0a3eb660681e9ca0aee6"
+    },
+    {
+      "path": "vendor/libfacedetection/src/facedetectcnn.cpp",
+      "sha256": "e86cbb3f4080762197d0a43b98f3534e08fe890a7eed5c5904e395b8bed4a55d"
+    },
+    {
+      "path": "vendor/libfacedetection/src/facedetectcnn.h",
+      "sha256": "896ad9cae317d1ebce947662ea44d7d1c3f12cd77606da977c0adea9c5625605"
+    },
+    {
+      "path": "vendor/source-lock.json",
+      "sha256": "f9fb2d6cd68bdedcd5c168f30ce254f76e86e83964310c8ade73de28f59eecb9"
+    },
+    {
+      "path": "profiles/xt4-2.12-evidence.json",
+      "sha256": "3d0f95c080df800f4c0e4d235e69f2497c38da1dbe56970e789b34f5e81b9c49"
+    }
+  ],
+  "integration_changes": [
+    "portable compiler/library paths and integrity verification",
+    "public setup/docs and source attribution",
+    "private benchmark reports and generated binaries omitted",
+    "reference runner explicitly includes fixed-width integer and environment headers for Linux"
+  ]
+}
