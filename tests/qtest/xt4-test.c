@@ -1178,6 +1178,39 @@ static void flash_lifecycle(void)
     qtest_quit(q);
 }
 
+static void flash_disabled_execute(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_flash(&run);
+    qtest_writel(q, FLASH_BASE, 0x800c0);
+    qtest_writel(q, FLASH_BASE + 0x90, 0x06000001);
+    flash_error(run, "disabled_flash_controller");
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x90), ==, 0);
+    qtest_clock_step(q, 64);
+    g_assert_cmpuint(nor_completions(run, NULL), ==, 0);
+    qtest_writel(q, FLASH_BASE, 0x800c1);
+    flash_launch(q, 0x9fa00000);
+    qtest_clock_step(q, 64);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0xa0), ==, 0x3a80c2);
+    qtest_writel(q, FLASH_BASE, 0x800c0);
+    qtest_writel(q, FLASH_BASE + 0x90, 0x06000001);
+    flash_error(run, "disabled_flash_controller");
+    /* Rejected launch cannot replace command, invalidate completed data,
+     * schedule a callback, change IRQ status, or set the chip's WEL. */
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x90), ==, 0x9fa00000);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0xa0), ==, 0x3a80c2);
+    qtest_clock_step(q, 64);
+    g_assert_cmpuint(nor_completions(run, NULL), ==, 1);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x40), ==, 0);
+    qtest_writel(q, FLASH_BASE, 0x800c1);
+    flash_launch(q, 0x05800000); qtest_clock_step(q, 64);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0xa0), ==, 0);
+    flash_launch(q, 0x06000000); qtest_clock_step(q, 64);
+    flash_launch(q, 0x05800000); qtest_clock_step(q, 64);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0xa0), ==, 2);
+    qtest_quit(q);
+}
+
 static void flash_mode_and_status(void)
 {
     g_autofree char *run = NULL;
@@ -1316,6 +1349,7 @@ int main(int argc, char **argv)
     qtest_add_func("/xt4/budget/faults", budget_strict_faults);
     qtest_add_func("/xt4/budget/pause-reset-idle-warp", budget_pause_reset_idle_warp);
     qtest_add_func("/xt4/budget/timer-order", budget_timer_order);
+    qtest_add_func("/xt4/flash/disabled-execute", flash_disabled_execute);
     qtest_add_func("/xt4/flash/lifecycle", flash_lifecycle);
     qtest_add_func("/xt4/flash/mode-status", flash_mode_and_status);
     qtest_add_func("/xt4/flash/invalid", flash_invalid);

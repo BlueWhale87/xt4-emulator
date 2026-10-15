@@ -173,6 +173,9 @@ static const char *write_register(XT4FlashState *s, hwaddr off, uint32_t value,
             if (!(s->known & KNOWN(0))) {
                 return "unknown_flash_config";
             }
+            if (!(REG(s, 0) & 1)) {
+                return "disabled_flash_controller";
+            }
             if (!xt4_nor_boot_prepare(&s->nor, &request, &effect, &detail)) {
                 return detail;
             }
