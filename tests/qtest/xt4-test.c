@@ -511,7 +511,8 @@ static void device_fault(const char *profile, const char *scenario, const char *
     g_autofree char *run = new_fixture_scenario(profile, scenario);
     g_autofree char *quoted = g_shell_quote(run);
     QTestState *q = (!strcmp(profile, "bootstrap-timer-exploration") ||
-                    !strcmp(profile, "bootstrap-controller-exploration")) ?
+                    !strcmp(profile, "bootstrap-controller-exploration") ||
+                    !strcmp(profile, "bootstrap-flash-exploration")) ?
         qtest_initf("-machine fujifilm-xt4,run-dir=%s -nodefaults -nic none -S "
                     "-accel tcg,thread=single -icount shift=0,align=off,sleep=off", quoted) :
         start(run, true);
@@ -1084,6 +1085,207 @@ static void clock_invalid(void)
                  0xff701040, 0xe1c020f0, true, 8, UINT64_MAX, "unsupported_clock_access", false);
 }
 
+#define FLASH_BASE 0xfffd8000
+#define FLASH_MODEL "xt4-cadence-stig-exploration-v1"
+#define NOR_MODEL "mx25um51245gxdi00-boot-v1"
+
+static QTestState *new_flash(char **run)
+{
+    *run = new_fixture_scenario("bootstrap-flash-exploration", "zero-ports-v1");
+    QTestState *q = start(*run, false);
+    qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+    return q;
+}
+
+static void flash_error(const char *run, const char *detail)
+{
+    QDict *e = controller_result(run, FLASH_MODEL, false, detail);
+    qobject_unref(e);
+}
+
+static unsigned nor_completions(const char *run, QDict **last)
+{
+    g_autofree char *path = g_build_filename(run, "engine-events.jsonl", NULL);
+    g_autofree char *text = NULL;
+    g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
+    g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+    unsigned count = 0;
+    if (last) {
+        *last = NULL;
+    }
+    for (int i = 0; lines[i] && *lines[i]; i++) {
+        QDict *e = qobject_to(QDict, qobject_from_json(lines[i], NULL));
+        if (!g_strcmp0(qdict_get_try_str(e, "event"), "device-transition") &&
+            !g_strcmp0(qdict_get_try_str(e, "device"), NOR_MODEL)) {
+            count++;
+            if (last) {
+                qobject_unref(*last);
+                *last = e;
+                continue;
+            }
+        }
+        qobject_unref(e);
+    }
+    return count;
+}
+
+static void flash_launch(QTestState *q, uint32_t command)
+{
+    qtest_writel(q, FLASH_BASE + 0x90, command);
+    qtest_writel(q, FLASH_BASE + 0x90, command | 1);
+}
+
+static void flash_lifecycle(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_flash(&run);
+    qtest_readl(q, FLASH_BASE); flash_error(run, "unknown_flash_register");
+    qtest_writel(q, FLASH_BASE + 0xb4, 0x80200020);
+    flash_error(run, "unknown_flash_config");
+    qtest_readl(q, FLASH_BASE + 0xa0); flash_error(run, "unavailable_flash_data");
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x38), ==, 0x10005);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0xe0), ==, 0x13edfa00);
+    qtest_writel(q, FLASH_BASE, 0x800c1);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE), ==, 0x800800c1);
+    qtest_writel(q, FLASH_BASE + 0x44, 0x4000);
+    flash_launch(q, 0x9fa00000); /* Three-byte JEDEC ID, read length N-1. */
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x90), ==, 0x9fa00002);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE) >> 31, ==, 0);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x40), ==, 0);
+    qtest_clock_step(q, 63);
+    g_assert_cmpuint(nor_completions(run, NULL), ==, 0);
+    qtest_readl(q, FLASH_BASE + 0xa0); flash_error(run, "unavailable_flash_data");
+    qtest_writel(q, FLASH_BASE + 0x94, 0); flash_error(run, "busy_flash_controller");
+    qtest_clock_step(q, 1);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x90), ==, 0x9fa00000);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0xa0), ==, 0x3a80c2);
+    qtest_readl(q, FLASH_BASE + 0xa4); flash_error(run, "unavailable_flash_data");
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE) >> 31, ==, 1);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x40), ==, 0x4000);
+    qtest_writel(q, FLASH_BASE + 0x44, 0);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x40), ==, 0x4000);
+    qtest_writel(q, FLASH_BASE + 0x40, 0x4000);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x40), ==, 0);
+    QDict *e = NULL;
+    g_assert_cmpuint(nor_completions(run, &e), ==, 1);
+    g_assert_cmpint(qdict_get_int(e, "virtual_ns"), ==, 64);
+    g_assert_cmpint(qdict_get_int(e, "rx_len"), ==, 3);
+    qobject_unref(e);
+    flash_launch(q, 0x06000000);
+    qtest_readl(q, FLASH_BASE + 0xa0); flash_error(run, "unavailable_flash_data");
+    qtest_clock_step(q, 64);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x40), ==, 0); /* IRQ disabled. */
+    qtest_quit(q);
+}
+
+static void flash_mode_and_status(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_flash(&run);
+    qtest_writel(q, FLASH_BASE, 0x800c1);
+    qtest_writel(q, FLASH_BASE + 0x94, 0);
+    qtest_writel(q, FLASH_BASE + 0xa8, 2);
+    flash_launch(q, 0x720b8000); /* SPI WRCR2: 4 address bytes, 1 data byte. */
+    qtest_clock_step(q, 64);
+    QDict *e = NULL;
+    nor_completions(run, &e);
+    g_assert_true(qdict_get_bool(e, "ignored_write"));
+    g_assert_false(qdict_get_bool(e, "write_enabled"));
+    g_assert_cmpstr(qdict_get_str(e, "protocol"), ==, "spi");
+    qobject_unref(e);
+    flash_launch(q, 0x06000000); qtest_clock_step(q, 64);
+    flash_launch(q, 0x05f00000); qtest_clock_step(q, 64);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0xa0), ==, 0x02020202);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0xa4), ==, 0x02020202);
+    flash_launch(q, 0x720b8000);
+    qtest_clock_step(q, 103);
+    g_assert_cmpuint(nor_completions(run, NULL), ==, 3);
+    qtest_clock_step(q, 1);
+    nor_completions(run, &e);
+    g_assert_false(qdict_get_bool(e, "write_enabled"));
+    g_assert_cmpstr(qdict_get_str(e, "protocol"), ==, "opi-dtr");
+    qobject_unref(e);
+    qtest_writel(q, FLASH_BASE, 0x400800c1);
+    qtest_writel(q, FLASH_BASE + 0xe0, 0x13edfaFA);
+    flash_launch(q, 0x059b0200); /* OPI 05FA, addr4, dummy4, rx2. */
+    qtest_clock_step(q, 64);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0xa0), ==, 0);
+    qtest_quit(q);
+}
+
+static void flash_invalid(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_flash(&run);
+    qtest_writel(q, FLASH_BASE, 0x800c1);
+    qtest_writeb(q, FLASH_BASE + 0x94, 1); flash_error(run, "unsupported_flash_access");
+    qtest_writew(q, FLASH_BASE + 0x94, 1); flash_error(run, "unsupported_flash_access");
+    qtest_writel(q, FLASH_BASE + 0x95, 1); flash_error(run, "unsupported_flash_access");
+    qtest_writeq(q, FLASH_BASE + 0x94, UINT64_MAX);
+    QDict *e = controller_result(run, FLASH_MODEL, false, "unsupported_flash_access");
+    assert_unsigned_value(e, UINT64_MAX); qobject_unref(e);
+    qtest_readl(q, FLASH_BASE + 0x94); flash_error(run, "unknown_flash_register");
+    qtest_writel(q, FLASH_BASE + 0xbc, 1); flash_error(run, "unsupported_flash_register");
+    qtest_writel(q, FLASH_BASE, 0x800c9); flash_error(run, "unsupported_flash_config");
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE), ==, 0x800800c1);
+    qtest_writel(q, FLASH_BASE + 0x90, 0x9f940001); flash_error(run, "unsupported_flash_command_fields");
+    qtest_writel(q, FLASH_BASE + 0x90, 0x9f908001); flash_error(run, "unsupported_flash_command_fields");
+    qtest_writel(q, FLASH_BASE + 0x90, 0x720b8001); flash_error(run, "unknown_flash_address");
+    qtest_writel(q, FLASH_BASE + 0x94, 0);
+    qtest_writel(q, FLASH_BASE + 0x90, 0x720b8001); flash_error(run, "unknown_flash_write_data");
+    qtest_writel(q, FLASH_BASE + 0x90, 0xff000001); flash_error(run, "unsupported_nor_command");
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x90), ==, 0);
+    qtest_writel(q, FLASH_BASE + 0x44, 1); flash_error(run, "unsupported_flash_irq_bits");
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x44), ==, 0);
+    qtest_clock_step(q, 1000);
+    g_assert_cmpuint(nor_completions(run, NULL), ==, 0);
+    qtest_clock_set(q, INT64_MAX - 63);
+    qtest_writel(q, FLASH_BASE + 0x90, 0x9fa00001); flash_error(run, "unsupported_flash_deadline");
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x90), ==, 0);
+    qtest_quit(q);
+    device_fault("bootstrap-flash-exploration", "zero-ports-v1", FLASH_MODEL,
+                 FLASH_BASE + 0x90, 0xe1c020f0, true, 8, UINT64_MAX, "unsupported_flash_access", false);
+}
+
+static void flash_reset_pending(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_flash(&run);
+    qtest_writel(q, FLASH_BASE, 0x800c1);
+    flash_launch(q, 0x06000000);
+    qtest_clock_step(q, 63);
+    qtest_system_reset(q);
+    qtest_clock_step(q, 1000);
+    g_assert_cmpuint(nor_completions(run, NULL), ==, 0);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x90), ==, 0);
+    qtest_writel(q, FLASH_BASE, 0x800c1);
+    flash_launch(q, 0x05800000); qtest_clock_step(q, 64);
+    g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0xa0), ==, 0);
+    qtest_quit(q);
+}
+
+static void flash_terminal_pending(void)
+{
+    /* Command already pending when TCG starts. Budget wins even at the same
+     * deadline, and no state effect may appear after the terminal stop. */
+    const unsigned budgets[] = {16, 64};
+    for (int i = 0; i < G_N_ELEMENTS(budgets); i++) {
+        g_autofree char *run = new_fixture_scenario("bootstrap-flash-exploration", "zero-ports-v1");
+        QTestState *q = start_budget(run, budgets[i]);
+        qtest_writel(q, 0, 0xeafffffe);
+        qtest_writel(q, FLASH_BASE, 0x800c1);
+        flash_launch(q, 0x06000000);
+        qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+        qtest_qmp_eventwait(q, "STOP");
+        QDict *stop = stop_record(run);
+        g_assert_cmpstr(qdict_get_str(stop, "reason"), ==, "instruction_budget");
+        qobject_unref(stop);
+        g_assert_cmpuint(nor_completions(run, NULL), ==, 0);
+        g_assert_cmphex(qtest_readl(q, FLASH_BASE + 0x90) & 2, ==, 0);
+        qtest_quit(q);
+    }
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -1114,6 +1316,11 @@ int main(int argc, char **argv)
     qtest_add_func("/xt4/budget/faults", budget_strict_faults);
     qtest_add_func("/xt4/budget/pause-reset-idle-warp", budget_pause_reset_idle_warp);
     qtest_add_func("/xt4/budget/timer-order", budget_timer_order);
+    qtest_add_func("/xt4/flash/lifecycle", flash_lifecycle);
+    qtest_add_func("/xt4/flash/mode-status", flash_mode_and_status);
+    qtest_add_func("/xt4/flash/invalid", flash_invalid);
+    qtest_add_func("/xt4/flash/reset-pending", flash_reset_pending);
+    qtest_add_func("/xt4/flash/terminal-pending", flash_terminal_pending);
     qtest_add_func("/xt4/controller/transfer-globals", transfer_globals);
     qtest_add_func("/xt4/controller/transfer-invalid", transfer_invalid);
     qtest_add_func("/xt4/controller/clock-lifecycle", clock_apply_lifecycle);

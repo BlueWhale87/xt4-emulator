@@ -24,10 +24,11 @@ def write_report(run_dir: Path) -> Path:
     if fast and (type(info['budget']) is not int or not 1 <= info['budget'] <= 1000000000):
         raise ValueError('Invalid report execution budget')
     scenario = info['profile'].get('scenario')
-    if info['profile']['name'] in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration'):
+    if info['profile']['name'] in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration'):
         decoded = scenario_from_dict(scenario,
             timer=info['profile']['name'] != 'bootstrap-input-exploration',
-            platform=info['profile']['name'] == 'bootstrap-controller-exploration')
+            platform=info['profile']['name'] in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration'),
+            flash=info['profile']['name'] == 'bootstrap-flash-exploration')
     else:
         if scenario is not None:
             raise ValueError('Synthetic scenario on a diagnostic report')
@@ -206,6 +207,11 @@ def write_report(run_dir: Path) -> Path:
                 'a one-nanosecond clock-selection apply latch.** These initial words and latency '
                 'are declared model choices. The logical latch does not change CPU/timer frequency. '
                 'Transfer status, DMA, interrupts and physical reset/ready timing remain unmodeled.']
+        if decoded.flash is not None:
+            lines += ['Flash assumptions: **named virtual SPI-start MX25UM51245GXDI00; '
+                '64ns logical transactions plus 40ns typical volatile configuration settling.** '
+                'Controller resets and early dual-opcode protocol policy are synthetic choices. '
+                'The fitted camera part, electrical timing, array access and PHY training remain unestablished.']
     lines += ['', '## Assumptions', '', *('- '+a for a in summary['assumptions']), '',
         '## Reproducibility', '', f"- Original DAT SHA256: `{summary['original_sha256']}`",
         f"- Engine SHA256: `{summary['engine_sha256']}`",

@@ -36,7 +36,7 @@ struct XT4ProfileDefinition {
     uint32_t entry, sp;
     const XT4RegionDefinition *regions;
     size_t region_count;
-    bool port_config, synthetic_inputs, timer_model, platform_model;
+    bool port_config, synthetic_inputs, timer_model, platform_model, flash_model;
 };
 
 static const XT4RegionDefinition module_regions[] = {
@@ -69,6 +69,8 @@ static const XT4ProfileDefinition profiles[] = {
       bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, false },
     { "bootstrap-controller-exploration", 0, 0,
       bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true },
+    { "bootstrap-flash-exploration", 0, 0,
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true },
 };
 
 static G_NORETURN void invalid(const char *message)
@@ -118,6 +120,9 @@ void xt4_record_stop(XT4State *s, CPUState *cs, const XT4Stop *stop)
         return;
     }
     s->stopped = true;
+    if (s->flash) {
+        xt4_flash_cancel_pending(s->flash);
+    }
     QDict *event = qdict_new();
     qdict_put_str(event, "event", "stop");
     qdict_put_str(event, "reason", stop->reason);
@@ -393,6 +398,63 @@ static void clock_apply_event(void *opaque, const XT4ClockApplyEvent *access)
     emit(s, event);
 }
 
+/* Budget completion has priority even when inserted after a flash timer
+ * with the same timestamp. No persistent effect may cross a terminal stop. */
+static bool flash_can_complete(void *opaque)
+{
+    XT4State *s = opaque;
+    if (s->stopped) {
+        return false;
+    }
+    if (s->instruction_budget &&
+        icount_get_raw() - s->instruction_baseline >= s->instruction_budget) {
+        execution_budget(s);
+        return false;
+    }
+    return true;
+}
+
+static void flash_event(void *opaque, const XT4FlashEvent *access)
+{
+    XT4State *s = opaque;
+    QDict *event = platform_event(s, access->transition ? XT4_NOR_MODEL : XT4_FLASH_MODEL,
+        "named virtual NOR; synthetic reset/timing/dual-opcode adapter; no array/DMA/PHY/CPU IRQ",
+        access->address, access->width, access->value, access->write,
+        access->success, access->detail, access->transition, access->virtual_ns);
+    if (access->transition) {
+        qdict_put_str(event, "operation", "nor-complete");
+    }
+    qdict_put_str(event, "virtual_part", XT4_NOR_MODEL);
+    qdict_put_str(event, "stig_protocol_policy", XT4_FLASH_PROTOCOL_POLICY);
+    qdict_put_int(event, "transaction_latency_ns", s->flash_contract.transaction_latency_ns);
+    qdict_put_int(event, "cr2_typical_settle_ns", s->flash_contract.cr2_typical_settle_ns);
+    qdict_put_bool(event, "busy", access->busy);
+    qdict_put_bool(event, "irq", access->irq);
+    qdict_put_int(event, "status", access->status);
+    qdict_put_int(event, "enable", access->enable);
+    qdict_put_int(event, "command", access->command);
+    qdict_put_int(event, "deadline_ns", access->deadline_ns);
+    qdict_put_int(event, "opcode", access->request.opcode);
+    qdict_put_int(event, "extension", access->request.extension);
+    qdict_put_int(event, "rx_len", access->request.rx_len);
+    qdict_put_int(event, "tx_len", access->request.tx_len);
+    qdict_put_int(event, "generation", access->nor.generation);
+    qdict_put_bool(event, "write_enabled", access->nor.write_enabled);
+    qdict_put_bool(event, "ignored_write", access->ignored_write);
+    qdict_put_str(event, "protocol", access->nor.protocol == XT4_NOR_SPI ? "spi" : "opi-dtr");
+    emit(s, event);
+    if (access->transition && !access->success) {
+        XT4Stop stop = {
+            .reason = "unsupported_device_transition", .access = "timer",
+            .physical_address = access->address, .has_physical = true,
+            .device = XT4_NOR_MODEL, .detail = access->detail,
+        };
+        xt4_record_stop(s, CPU(s->cpu), &stop);
+        qemu_system_debug_request();
+        cpu_stop_current();
+    }
+}
+
 static MemTxResult unknown_read(void *opaque, hwaddr addr, uint64_t *value,
                                 unsigned size, MemTxAttrs attrs)
 {
@@ -440,6 +502,9 @@ static void reset(void *opaque)
     if (s->transfer) {
         device_cold_reset(DEVICE(s->transfer));
         device_cold_reset(DEVICE(s->clock_apply));
+    }
+    if (s->flash) {
+        device_cold_reset(DEVICE(s->flash));
     }
     for (int i = 0; i < s->profile->region_count; i++) {
         const XT4RegionDefinition *r = &s->profile->regions[i];
@@ -531,7 +596,7 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
     QDict *scenario = qobject_to(QDict, obj);
     const char *id = scenario ? qdict_get_try_str(scenario, "scenario_id") : NULL;
     if (!id || (strcmp(id, "zero-ports-v1") && strcmp(id, "one-ports-v1")) ||
-        qdict_size(scenario) != (profile->platform_model ? 4 : 3)) {
+        qdict_size(scenario) != (3 + profile->platform_model + profile->flash_model)) {
         invalid("explicit supported synthetic scenario required");
     }
     QList *words = qobject_to(QList, qdict_get(scenario, "port_inputs"));
@@ -563,6 +628,35 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
     uint32_t expected = !strcmp(id, "zero-ports-v1") ? 0 : UINT32_MAX;
     g_autoptr(GString) canonical = g_string_new("{");
     const QListEntry *entry;
+    if (profile->flash_model) {
+        QDict *flash = qobject_to(QDict, qdict_get(scenario, "flash"));
+        if (!flash || qdict_size(flash) != 9 ||
+            g_strcmp0(qdict_get_try_str(flash, "virtual_part"), XT4_NOR_MODEL) ||
+            g_strcmp0(qdict_get_try_str(flash, "stig_protocol_policy"), XT4_FLASH_PROTOCOL_POLICY) ||
+            !scenario_true(flash, "powered_settled") ||
+            !scenario_number(flash, "transaction_latency_ns", 64) ||
+            !scenario_number(flash, "cr2_typical_settle_ns", 40) ||
+            !scenario_number(flash, "initial_command_word", 0) ||
+            !scenario_number(flash, "initial_opcode_extensions", 0x13edfa00) ||
+            !scenario_number(flash, "initial_write_completion", 0x10005) ||
+            !scenario_number(flash, "initial_variant_word", 0)) {
+            invalid("unsupported synthetic flash contract");
+        }
+        s->flash_contract = (XT4FlashContract) {
+            .transaction_latency_ns = 64, .cr2_typical_settle_ns = 40,
+            .initial_opcode_extensions = 0x13edfa00,
+            .initial_write_completion = 0x10005,
+            .stig_protocol_policy = XT4_FLASH_PROTOCOL_POLICY,
+        };
+        g_string_append(canonical,
+            "\"flash\":{\"cr2_typical_settle_ns\":40,\"initial_command_word\":0,"
+            "\"initial_opcode_extensions\":334363136,\"initial_variant_word\":0,"
+            "\"initial_write_completion\":65541,\"powered_settled\":true,"
+            "\"stig_protocol_policy\":\"" XT4_FLASH_PROTOCOL_POLICY "\","
+            "\"transaction_latency_ns\":64,\"virtual_part\":\"" XT4_NOR_MODEL "\"},");
+    } else if (qdict_haskey(scenario, "flash")) {
+        invalid("flash assumptions not allowed on older profile");
+    }
     if (profile->platform_model) {
         QDict *platform = qobject_to(QDict, qdict_get(scenario, "platform"));
         QList *globals = platform ? qobject_to(QList, qdict_get(platform, "transfer_globals")) : NULL;
@@ -625,13 +719,13 @@ static const XT4ProfileDefinition *validate_profile(int dir, XT4State *s)
     QObject *models_obj = qdict_get(p, "models");
     QList *models = qobject_to(QList, models_obj);
     if ((models_obj && !models) ||
-        (profile->port_config ? !models || qlist_size(models) != (1 + profile->synthetic_inputs + profile->timer_model + 2 * profile->platform_model) :
+        (profile->port_config ? !models || qlist_size(models) != (1 + profile->synthetic_inputs + profile->timer_model + 2 * profile->platform_model + 2 * profile->flash_model) :
                                models && qlist_size(models) != 0)) {
         invalid("unsupported device model set");
     }
     if (profile->port_config) {
         const char *expected[] = {XT4_PORT_CONFIG_MODEL, XT4_STATIC_PORT_INPUT_MODEL, XT4_TIMER_MODEL,
-                                  XT4_TRANSFER_MODEL, XT4_CLOCK_APPLY_MODEL};
+                                  XT4_TRANSFER_MODEL, XT4_CLOCK_APPLY_MODEL, XT4_FLASH_MODEL, XT4_NOR_MODEL};
         const QListEntry *entry;
         int index = 0;
         QLIST_FOREACH_ENTRY(models, entry) {
@@ -763,6 +857,14 @@ static void init(MachineState *machine)
         xt4_clock_apply_set_event_callback(s->clock_apply, clock_apply_event, s);
         sysbus_realize_and_unref(SYS_BUS_DEVICE(s->clock_apply), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(s->clock_apply), 0, 0xff701000);
+    }
+    if (s->profile->flash_model) {
+        s->flash = XT4_FLASH(qdev_new(TYPE_XT4_FLASH));
+        xt4_flash_set_contract(s->flash, &s->flash_contract);
+        xt4_flash_set_event_callback(s->flash, flash_event, s);
+        xt4_flash_set_completion_guard(s->flash, flash_can_complete, s);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(s->flash), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(s->flash), 0, 0xfffd8000);
     }
     s->cpu = XT4_CPU(object_new(TYPE_XT4_CPU));
     s->cpu->board = s;

@@ -4,6 +4,7 @@ config FUJIFILM_XT4
     select FUJIFILM_XT4_TIMER
     select FUJIFILM_XT4_TRANSFER
     select FUJIFILM_XT4_CLOCK_APPLY
+    select FUJIFILM_XT4_FLASH
     depends on ARM && TCG
     # Arm TCG links these CPU-interface helpers even for Cortex-A7.
     # No controller is instantiated by the diagnostic machine.

@@ -7,6 +7,7 @@
 #include "hw/timer/xt4-timer.h"
 #include "hw/dma/xt4-transfer.h"
 #include "hw/misc/xt4-clock-apply.h"
+#include "hw/ssi/xt4-flash.h"
 #include "target/arm/cpu.h"
 #include "system/memory.h"
 #include "system/runstate.h"
@@ -43,6 +44,8 @@ struct XT4State {
     XT4TimerState *timer;
     XT4TransferState *transfer;
     XT4ClockApplyState *clock_apply;
+    XT4FlashState *flash;
+    XT4FlashContract flash_contract;
     const char *pending_device, *pending_detail;
     char *run_dir;
     char *scenario_id, *scenario_sha256;
