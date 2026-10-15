@@ -8,6 +8,11 @@ typedef enum XT4NorProtocol {
     XT4_NOR_OPI_DTR,
 } XT4NorProtocol;
 
+typedef enum XT4NorPart {
+    XT4_NOR_PART_MX25,
+    XT4_NOR_PART_SELECTOR2C,
+} XT4NorPart;
+
 typedef struct XT4NorRequest {
     XT4NorProtocol protocol;
     uint8_t opcode, extension;
@@ -18,6 +23,7 @@ typedef struct XT4NorRequest {
 } XT4NorRequest;
 
 typedef struct XT4NorState {
+    XT4NorPart part;
     XT4NorProtocol protocol;
     bool write_enabled;
     uint64_t generation;

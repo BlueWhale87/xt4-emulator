@@ -2,7 +2,7 @@
 
 An experimental Fujifilm X-T4 machine for QEMU, with a bounded execution runner and reproducible dependency reports. The long-term goal is to run the original camera menus and virtual SD storage before developing an SD recipe manager.
 
-**Current result: original bootstrap execution completes 64 calibration transfers and computes its own calibration result, then reaches an unsupported interrupt-controller read after 96,742 raw engine-counted instructions. This uses explicit synthetic input, timing, flash, PHY and ideal sampling assumptions. Camera menus do not boot yet.** Display, controls, storage, interrupts and full platform startup remain work in progress.
+**Current result: original bootstrap execution completes 64 calibration transfers and computes its own calibration result, then reaches an unsupported interrupt-controller read after 96,742 raw engine-counted instructions. This uses explicit synthetic input, timing, flash, PHY and ideal sampling assumptions. Camera menus do not boot yet.** The alternate selector0x2c SPI profile reaches the same boundary after95,402 instructions with its own strict command/state contract; sampling remains ideal. Display, controls, storage, interrupts and full platform startup remain work in progress.
 
 The project runs entirely on the host. Its runner exposes no camera connection, USB passthrough, host networking or physical storage devices. It does not modify or install camera firmware.
 

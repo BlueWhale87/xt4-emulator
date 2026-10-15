@@ -37,7 +37,7 @@ struct XT4ProfileDefinition {
     const XT4RegionDefinition *regions;
     size_t region_count;
     bool port_config, synthetic_inputs, timer_model, platform_model, flash_model, phy_model;
-    bool calibration_model;
+    bool calibration_model, selector2c;
 };
 
 static const XT4RegionDefinition module_regions[] = {
@@ -76,6 +76,8 @@ static const XT4ProfileDefinition profiles[] = {
       bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true, true },
     { "bootstrap-calibration-exploration", 0, 0,
       bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true, true, true },
+    { "bootstrap-selector2c-exploration", 0, 0,
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true, true, true, true },
 };
 
 static G_NORETURN void invalid(const char *message)
@@ -428,15 +430,18 @@ static bool flash_can_complete(void *opaque)
 static void flash_event(void *opaque, const XT4FlashEvent *access)
 {
     XT4State *s = opaque;
-    QDict *event = platform_event(s, access->transition ? XT4_NOR_MODEL : XT4_FLASH_MODEL,
+    const char *part = s->profile->selector2c ? XT4_NOR_MODEL_2C : XT4_NOR_MODEL;
+    QDict *event = platform_event(s, access->transition ? part : XT4_FLASH_MODEL,
+        s->profile->selector2c ?
+        "virtual selector2c SPI subset; synthetic reset/timing; fitted part and electrical behavior unknown" :
         "named virtual NOR; synthetic reset/timing/dual-opcode adapter; no array/DMA/PHY/CPU IRQ",
         access->address, access->width, access->value, access->write,
         access->success, access->detail, access->transition, access->virtual_ns);
     if (access->transition) {
         qdict_put_str(event, "operation", "nor-complete");
     }
-    qdict_put_str(event, "virtual_part", XT4_NOR_MODEL);
-    qdict_put_str(event, "stig_protocol_policy", XT4_FLASH_PROTOCOL_POLICY);
+    qdict_put_str(event, "virtual_part", part);
+    qdict_put_str(event, "stig_protocol_policy", s->flash_contract.stig_protocol_policy);
     qdict_put_int(event, "transaction_latency_ns", s->flash_contract.transaction_latency_ns);
     qdict_put_int(event, "cr2_typical_settle_ns", s->flash_contract.cr2_typical_settle_ns);
     qdict_put_bool(event, "busy", access->busy);
@@ -458,7 +463,7 @@ static void flash_event(void *opaque, const XT4FlashEvent *access)
         XT4Stop stop = {
             .reason = "unsupported_device_transition", .access = "timer",
             .physical_address = access->address, .has_physical = true,
-            .device = XT4_NOR_MODEL, .detail = access->detail,
+            .device = part, .detail = access->detail,
         };
         xt4_record_stop(s, CPU(s->cpu), &stop);
         qemu_system_debug_request();
@@ -733,13 +738,16 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
     g_autoptr(GString) canonical = g_string_new("{");
     const QListEntry *entry;
     if (profile->flash_model) {
+        const char *part = profile->selector2c ? XT4_NOR_MODEL_2C : XT4_NOR_MODEL;
+        const char *policy = profile->selector2c ? XT4_FLASH_PROTOCOL_POLICY_2C : XT4_FLASH_PROTOCOL_POLICY;
+        unsigned settle = profile->selector2c ? 0 : 40;
         QDict *flash = qobject_to(QDict, qdict_get(scenario, "flash"));
         if (!flash || qdict_size(flash) != 9 ||
-            g_strcmp0(qdict_get_try_str(flash, "virtual_part"), XT4_NOR_MODEL) ||
-            g_strcmp0(qdict_get_try_str(flash, "stig_protocol_policy"), XT4_FLASH_PROTOCOL_POLICY) ||
+            g_strcmp0(qdict_get_try_str(flash, "virtual_part"), part) ||
+            g_strcmp0(qdict_get_try_str(flash, "stig_protocol_policy"), policy) ||
             !scenario_true(flash, "powered_settled") ||
             !scenario_number(flash, "transaction_latency_ns", 64) ||
-            !scenario_number(flash, "cr2_typical_settle_ns", 40) ||
+            !scenario_number(flash, "cr2_typical_settle_ns", settle) ||
             !scenario_number(flash, "initial_command_word", 0) ||
             !scenario_number(flash, "initial_opcode_extensions", 0x13edfa00) ||
             !scenario_number(flash, "initial_write_completion", 0x10005) ||
@@ -747,17 +755,18 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
             invalid("unsupported synthetic flash contract");
         }
         s->flash_contract = (XT4FlashContract) {
-            .transaction_latency_ns = 64, .cr2_typical_settle_ns = 40,
+            .part = profile->selector2c ? XT4_NOR_PART_SELECTOR2C : XT4_NOR_PART_MX25,
+            .transaction_latency_ns = 64, .cr2_typical_settle_ns = settle,
             .initial_opcode_extensions = 0x13edfa00,
             .initial_write_completion = 0x10005,
-            .stig_protocol_policy = XT4_FLASH_PROTOCOL_POLICY,
+            .stig_protocol_policy = policy,
         };
-        g_string_append(canonical,
-            "\"flash\":{\"cr2_typical_settle_ns\":40,\"initial_command_word\":0,"
+        g_string_append_printf(canonical,
+            "\"flash\":{\"cr2_typical_settle_ns\":%u,\"initial_command_word\":0,"
             "\"initial_opcode_extensions\":334363136,\"initial_variant_word\":0,"
             "\"initial_write_completion\":65541,\"powered_settled\":true,"
-            "\"stig_protocol_policy\":\"" XT4_FLASH_PROTOCOL_POLICY "\","
-            "\"transaction_latency_ns\":64,\"virtual_part\":\"" XT4_NOR_MODEL "\"},");
+            "\"stig_protocol_policy\":\"%s\","
+            "\"transaction_latency_ns\":64,\"virtual_part\":\"%s\"},", settle, policy, part);
     } else if (qdict_haskey(scenario, "flash")) {
         invalid("flash assumptions not allowed on older profile");
     }
@@ -818,6 +827,7 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
     }
     g_string_append_printf(canonical, "],\"scenario_id\":\"%s\",\"timer\":%s", id, timer_json);
     if (profile->calibration_model) {
+        const char *sampling = profile->selector2c ? XT4_SAMPLE_POLICY_2C : XT4_SAMPLE_POLICY;
         QDict *t = qobject_to(QDict, qdict_get(scenario, "transfer"));
         if (!t || qdict_size(t) != 9 ||
             !scenario_number(t, "initial_status_word", 0) ||
@@ -826,7 +836,7 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
             !scenario_number(t, "cbar_base", 0xf8f00000) ||
             g_strcmp0(qdict_get_try_str(t, "route_policy"), XT4_ROUTE_POLICY) ||
             g_strcmp0(qdict_get_try_str(t, "source_policy"), XT4_SOURCE_POLICY) ||
-            g_strcmp0(qdict_get_try_str(t, "sample_policy"), XT4_SAMPLE_POLICY) ||
+            g_strcmp0(qdict_get_try_str(t, "sample_policy"), sampling) ||
             g_strcmp0(qdict_get_try_str(t, "status_policy"), XT4_STATUS_POLICY) ||
             g_strcmp0(qdict_get_try_str(t, "terminal_address_policy"), XT4_ADDRESS_POLICY)) {
             invalid("unsupported synthetic calibration contract");
@@ -834,16 +844,16 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
         s->calibration_contract = (XT4CalibrationTransferContract) {
             .transfer_latency_ns = 64, .cbar_base = 0xf8f00000,
             .route_policy = XT4_ROUTE_POLICY, .source_policy = XT4_SOURCE_POLICY,
-            .sample_policy = XT4_SAMPLE_POLICY, .status_policy = XT4_STATUS_POLICY,
+            .sample_policy = sampling, .status_policy = XT4_STATUS_POLICY,
             .terminal_address_policy = XT4_ADDRESS_POLICY,
         };
-        g_string_append(canonical,
+        g_string_append_printf(canonical,
             ",\"transfer\":{\"cbar_base\":4176478208,\"initial_indirect_control\":0,"
             "\"initial_status_word\":0,\"route_policy\":\"" XT4_ROUTE_POLICY "\","
-            "\"sample_policy\":\"" XT4_SAMPLE_POLICY "\","
+            "\"sample_policy\":\"%s\","
             "\"source_policy\":\"" XT4_SOURCE_POLICY "\","
             "\"status_policy\":\"" XT4_STATUS_POLICY "\","
-            "\"terminal_address_policy\":\"" XT4_ADDRESS_POLICY "\",\"transfer_latency_ns\":64}");
+            "\"terminal_address_policy\":\"" XT4_ADDRESS_POLICY "\",\"transfer_latency_ns\":64}", sampling);
     } else if (qdict_haskey(scenario, "transfer")) {
         invalid("transfer assumptions not allowed on older profile");
     }
@@ -879,7 +889,8 @@ static const XT4ProfileDefinition *validate_profile(int dir, XT4State *s)
     }
     if (profile->port_config) {
         const char *expected[] = {XT4_PORT_CONFIG_MODEL, XT4_STATIC_PORT_INPUT_MODEL, XT4_TIMER_MODEL,
-                                  XT4_TRANSFER_MODEL, XT4_CLOCK_APPLY_MODEL, XT4_FLASH_MODEL, XT4_NOR_MODEL, XT4_PHY_MODEL,
+                                  XT4_TRANSFER_MODEL, XT4_CLOCK_APPLY_MODEL, XT4_FLASH_MODEL,
+                                  profile->selector2c ? XT4_NOR_MODEL_2C : XT4_NOR_MODEL, XT4_PHY_MODEL,
                                   XT4_ROUTE_MODEL, XT4_DMA_MODEL, XT4_INDIRECT_MODEL, XT4_MEDIA_MODEL};
         const QListEntry *entry;
         int index = 0;

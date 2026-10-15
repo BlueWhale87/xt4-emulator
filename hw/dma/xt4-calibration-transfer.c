@@ -320,7 +320,8 @@ void xt4_calibration_transfer_set_contract(XT4CalibrationTransferState *s,
     g_assert_cmpuint(c->cbar_base, ==, 0xf8f00000);
     g_assert_cmpstr(c->route_policy, ==, XT4_ROUTE_POLICY);
     g_assert_cmpstr(c->source_policy, ==, XT4_SOURCE_POLICY);
-    g_assert_cmpstr(c->sample_policy, ==, XT4_SAMPLE_POLICY);
+    g_assert(g_str_equal(c->sample_policy, XT4_SAMPLE_POLICY) ||
+             g_str_equal(c->sample_policy, XT4_SAMPLE_POLICY_2C));
     g_assert_cmpstr(c->status_policy, ==, XT4_STATUS_POLICY);
     g_assert_cmpstr(c->terminal_address_policy, ==, XT4_ADDRESS_POLICY);
     s->contract = *c;

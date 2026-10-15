@@ -251,6 +251,41 @@ static void stale_generation_and_reset(void)
     g_assert_false(s.write_enabled);
 }
 
+static void selector2c_query_only(void)
+{
+    XT4NorState s = { .part = XT4_NOR_PART_SELECTOR2C };
+    xt4_nor_boot_reset(&s);
+    XT4NorRequest r = request(0x9f);
+    r.rx_len = 1;
+    XT4NorEffect e = prepare(&s, r);
+    g_assert_cmpuint(e.rx_len, ==, 1);
+    g_assert_cmpuint(e.rx[0], ==, 0x2c);
+    g_assert_false(e.state_change);
+    g_assert_cmpuint(e.settle_ns, ==, 0);
+    commit(&s, &e);
+    for (int n = 0; n <= 8; n++) {
+        r.rx_len = n;
+        if (n != 1) {
+            reject(&s, r);
+        }
+    }
+    r.rx_len = 1;
+    r.address_bytes = 1; reject(&s, r); r.address_bytes = 0;
+    r.dummy_cycles = 1; reject(&s, r); r.dummy_cycles = 0;
+    r.tx_len = 1; reject(&s, r); r.tx_len = 0;
+    r.has_extension = true; reject(&s, r); r.has_extension = false;
+    r.protocol = XT4_NOR_OPI_DTR; reject(&s, r);
+    reject(&s, request(6));
+    r = request(5); r.rx_len = 1; reject(&s, r);
+    reject(&s, configuration());
+    xt4_nor_boot_reset(&s);
+    r = request(0x9f); r.rx_len = 1;
+    e = prepare(&s, r);
+    g_assert_cmpuint(e.rx[0], ==, 0x2c);
+    s.part = 99;
+    reject(&s, r);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -261,5 +296,6 @@ int main(int argc, char **argv)
     g_test_add_func("/xt4/nor/malformed-spi", malformed_spi);
     g_test_add_func("/xt4/nor/malformed-opi", malformed_opi);
     g_test_add_func("/xt4/nor/stale-reset", stale_generation_and_reset);
+    g_test_add_func("/xt4/nor/selector2c-query-only", selector2c_query_only);
     return g_test_run();
 }

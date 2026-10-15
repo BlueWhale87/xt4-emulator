@@ -24,13 +24,14 @@ def write_report(run_dir: Path) -> Path:
     if fast and (type(info['budget']) is not int or not 1 <= info['budget'] <= 1000000000):
         raise ValueError('Invalid report execution budget')
     scenario = info['profile'].get('scenario')
-    if info['profile']['name'] in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'):
+    if info['profile']['name'] in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'):
         decoded = scenario_from_dict(scenario,
             timer=info['profile']['name'] != 'bootstrap-input-exploration',
-            platform=info['profile']['name'] in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
-            flash=info['profile']['name'] in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
-            phy=info['profile']['name'] in ('bootstrap-phy-exploration', 'bootstrap-calibration-exploration'),
-            transfer=info['profile']['name'] == 'bootstrap-calibration-exploration')
+            platform=info['profile']['name'] in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
+            flash=info['profile']['name'] in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
+            phy=info['profile']['name'] in ('bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
+            transfer=info['profile']['name'] in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
+            selector2c=info['profile']['name'] == 'bootstrap-selector2c-exploration')
     else:
         if scenario is not None:
             raise ValueError('Synthetic scenario on a diagnostic report')
@@ -38,11 +39,11 @@ def write_report(run_dir: Path) -> Path:
     if info['provenance'].get('scenario_sha256') != scenario_sha256(decoded):
         raise ValueError('Report scenario fingerprint mismatch')
     media = info['profile'].get('media')
-    if info['profile']['name'] != 'bootstrap-calibration-exploration' and 'media' in info['profile']:
+    if info['profile']['name'] not in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration') and 'media' in info['profile']:
         raise ValueError('Unsupported report media')
     try:
         validate_media(FlashMedia(**media) if isinstance(media, dict) else media,
-                       required=info['profile']['name'] == 'bootstrap-calibration-exploration')
+                       required=info['profile']['name'] in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'))
     except TypeError as exc:
         raise ValueError('Unsupported report media') from exc
     engine = json.loads(read_regular(run_dir,'engine-build.json'))
@@ -222,7 +223,11 @@ def write_report(run_dir: Path) -> Path:
                 'a one-nanosecond clock-selection apply latch.** These initial words and latency '
                 'are declared model choices. The logical latch does not change CPU/timer frequency. '
                 'Transfer status, DMA, interrupts and physical reset/ready timing remain unmodeled.']
-        if decoded.flash is not None:
+        if decoded.flash is not None and decoded.flash.virtual_part == 'selector2c-spi-boot-v1':
+            lines += ['Flash assumptions: **`selector2c-spi-boot-v1`, one-byte SPI selector, '
+                '64ns virtual transactions and no CR2 operation.** No fitted chip, ID suffix or '
+                'electrical protocol is established.']
+        elif decoded.flash is not None:
             lines += ['Flash assumptions: **named virtual SPI-start MX25UM51245GXDI00; '
                 '64ns logical transactions plus 40ns typical volatile configuration settling.** '
                 'Controller resets and early dual-opcode protocol policy are synthetic choices. '
@@ -232,9 +237,10 @@ def write_report(run_dir: Path) -> Path:
                 'four-nanosecond master and DLL transitions.** Digital lock state does not establish '
                 'electrical timing, valid sampling taps, a passing data eye or successful calibration.']
         if decoded.transfer is not None:
+            phases = '16/17' if decoded.flash.virtual_part == 'selector2c-spi-boot-v1' else '20/21'
             lines += ['Calibration transfer assumptions: **one covered128-byte source, '
                 'request2A/channel1,64ns whole delivery, active status bit16, retained addresses '
-                'and ideal taps0..127 in controller phases20/21.** Parent-profile no-DMA statements '
+                f'and ideal taps0..127 in controller phases{phases}.** Parent-profile no-DMA statements '
                 'above describe the earlier increments. Original code performs its own comparisons '
                 'and computes calibration results. Virtual CBAR F8F00000 is explicitly selected; '
                 'no GIC or full boot is supplied. Physical sampling and DMA semantics remain unmeasured.']

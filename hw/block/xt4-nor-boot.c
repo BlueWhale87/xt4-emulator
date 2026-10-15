@@ -41,6 +41,22 @@ bool xt4_nor_boot_prepare(const XT4NorState *s, const XT4NorRequest *r,
         .next_protocol = s->protocol,
         .next_write_enabled = s->write_enabled,
     };
+    if (s->part == XT4_NOR_PART_SELECTOR2C) {
+        /* Only the first selector byte is known. No invented ID suffix,
+         * manufacturer protocol, status or configuration operation. */
+        if (r->protocol != XT4_NOR_SPI || r->opcode != 0x9f ||
+            r->address_bytes || r->dummy_cycles || r->tx_len || r->rx_len != 1) {
+            return failure(detail, "unsupported_selector2c_command");
+        }
+        result.rx[0] = 0x2c;
+        result.rx_len = 1;
+        *effect = result;
+        *detail = NULL;
+        return true;
+    }
+    if (s->part != XT4_NOR_PART_MX25) {
+        return failure(detail, "unsupported_nor_part");
+    }
     switch (r->opcode) {
     case 0x9f: {
         static const uint8_t id[] = {0xc2, 0x80, 0x3a};

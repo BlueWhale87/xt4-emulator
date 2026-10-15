@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "name": "bootstrap-selector2c-exploration",
+  "cpu_type": "xt4-cortex-a7-arm-cpu",
+  "entry": 0,
+  "registers": {
+    "r0": 0,
+    "r1": 0,
+    "r2": 0,
+    "r3": 0,
+    "r4": 0,
+    "r5": 0,
+    "r6": 0,
+    "r7": 0,
+    "r8": 0,
+    "r9": 0,
+    "r10": 0,
+    "r11": 0,
+    "r12": 0,
+    "sp": 0,
+    "lr": 4294967280,
+    "cpsr": 467
+  },
+  "regions": [
+    {
+      "name": "bootstrap",
+      "base": 0,
+      "size": 110784,
+      "file": "inputs/bootstrap.bin",
+      "file_size": 51328,
+      "sha256": "bf2d1d4ca9d1d60e5125a964988a3f1852e177c3176d35dc59dcc63afe41f6b1",
+      "initialization": "original file then provisional zero allocation; firmware clears BSS and core-0 stack itself",
+      "confidence": "vector and stack literals corroborate this minimum envelope; permissions and untouched tail contents are provisional"
+    }
+  ],
+  "assumptions": [
+    "Exploratory bootstrap-vector entry; not measured architectural cold boot",
+    "Provisional R0-R12=0, SP=0, LR=0xfffffff0, CPSR=0x1d3 and CPU reset system-register state",
+    "Single-core diagnostic; other cores and release behavior unmodeled",
+    "Little-endian ARM state, MMU/caches disabled initially",
+    "RAM permissions and untouched tail zero allocation are hypotheses; original code performs its own BSS/stack clears",
+    "Synthetic exploration: explicit static full-word port samples, not physical camera state or a no-buttons condition. Configuration remains inferred; timer, IRQ, storage and calibration remain unknown.",
+    "Synthetic timer: channels initially halted; immediate count loading; preserve count on enable;54MHz virtual clock with1ns per instruction; stop at first terminal count, no reload or IRQ behavior established.",
+    "Virtual time follows executed instructions; synthetic timer deadlines do not drive idle warp. Debugger pauses do not advance this countdown. WFI wake/IRQ timing remains unsupported.",
+    "Synthetic platform:16 declared transfer-global words; only bit28 enable changes modeled, no transfer/status/IRQ.",
+    "Synthetic clock apply: known selection values, staged command2 and1ns virtual completion; logical latch only, no actual frequency change or measured ready/reset timing.",
+    "Explicit virtual selector2c SPI boot subset; one-byte identity only, no fitted part or ID suffix established.",
+    "Synthetic controller reset words; SPI-only selector2c contract, no C2 volatile CR2 mode change. Electrical protocol remains unmeasured.",
+    "64ns logical transaction completion; no configuration-settle operation supported. Busy/idle, data and IRQ state follow pending operations; CPU IRQ routing is unmodeled.",
+    "Synthetic PHY digital handshake:initial observation0, immediate reset/disable lock clear,4ns master-ready and4ns DLL-lock transitions. No measured analog timing, passing taps or data-eye/calibration result.",
+    "Separate B4/B8/BC register authority and controller-config admission; no array mapping, request routing, DMA completion or CPU IRQ route supplied.",
+    "This profile adds only a strict covered128-byte flash-to-RAM calibration path. Earlier no-array/DMA statements describe the parent profiles. No direct CPU flash mapping or general DMA is supplied.",
+    "Virtual source translation subtracts F0000000 within64MiB capacity; unknown bytes reject. This is an integration policy, not documented physical high-bit masking.",
+    "Explicit ideal sampling for all taps0..127 in controller phases16/17; original code performs comparisons and chooses the calibration result. No measured data-eye or physical phase17 acceptance is claimed.",
+    "Explicit request2A/channel1, active-bit16 on peripheral request,64ns whole delivery and retained programmed addresses. No CPU IRQ, partial progress or measured DMA timing/status.",
+    "Virtual CBAR F8F00000 keeps the first unmodeled GIC access outside RAM; actual camera CBAR and GIC behavior remain unknown."
+  ],
+  "models": [
+    "xt4-port-config-v1",
+    "xt4-static-port-input-v1",
+    "xt4-timer-exploration-v1",
+    "xt4-transfer-enable-exploration-v1",
+    "xt4-clock-apply-exploration-v1",
+    "xt4-cadence-stig-exploration-v1",
+    "selector2c-spi-boot-v1",
+    "xt4-cadence-phy-exploration-v1",
+    "xt4-request-route-exploration-v1",
+    "xt4-dma-channel1-exploration-v1",
+    "xt4-indirect-read-exploration-v1",
+    "xt4-covered-nor-media-v1"
+  ],
+  "scenario": null,
+  "media": {
+    "file": "inputs/calibration.bin",
+    "file_size": 128,
+    "sha256": "10fa7918107458a1b72e18ef91b9bfc27b6eb76e3b562aa6566c5561dcf4929a",
+    "flash_offset": 172160,
+    "capacity": 67108864,
+    "virtual_base": 4026531840,
+    "policy": "f0-covered-span-v1"
+  }
+}

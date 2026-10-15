@@ -14,6 +14,7 @@
 #define XT4_ROUTE_POLICY "request2a-channel1-v1"
 #define XT4_SOURCE_POLICY "f0-covered-span-v1"
 #define XT4_SAMPLE_POLICY "ideal-taps0-127-phases20-21-v1"
+#define XT4_SAMPLE_POLICY_2C "ideal-taps0-127-phases16-17-v1"
 #define XT4_STATUS_POLICY "request-active-bit16-v1"
 #define XT4_ADDRESS_POLICY "retain-programmed-v1"
 #define XT4_CALIBRATION_SHA256 "10fa7918107458a1b72e18ef91b9bfc27b6eb76e3b562aa6566c5561dcf4929a"

@@ -12,6 +12,14 @@ python3.13 -m xt4lab run \
 
 Use a fresh directory for every run. `one-ports-v1` declares the other synthetic input fixture. Both fixtures, a repeated run and a fresh engine reset reproduce the same execution boundary. Reports retain profile, scenario, input, engine and event identities. The current path has 2,380 modeled writes and 2,304 modeled reads; transfer completion produces separate route, DMA and indirect component events, not extra guest accesses.
 
+## Alternate selector 0x2c branch
+
+Select `--profile bootstrap-selector2c-exploration` with either explicit port fixture to execute the original C504 descriptor branch. It supplies `selector2c-spi-boot-v1`: only a one-byte SPI `9f` response is supported. Extra identity bytes, status, write-enable and configuration commands reject. It is an unidentified virtual device, with no claim about a fitted flash part or electrical protocol.
+
+Original firmware selects descriptor `0xc504`, controller size `0x111003`, initial read command `0xcc`, trained read command `0xfd`, extensions `0x0000fa00` and F0 zero. It skips the other part's WREN/CR2/OPI transition. The strict array admission requires the matching SPI tuple; mixing the older part's size, read instruction or dual-opcode configuration rejects before delivery.
+
+The same original calibration code completes 32 transfers in programmed phase16 and 32 in phase17. Its result is trained=1, midpoint=62, phase=0, selector=0x107 and flash selector=0x2c. It reaches the same unsupported GIC read at PC `0x34b0` after **95,402 raw instructions**. All taps remain explicitly ideal; the computed midpoint does not establish physical sampling behavior. No comparison buffer or result cache is prefilled. The reset, latency and coverage policies below are shared; CR2 settling is zero because that operation is unsupported in this subset.
+
 ## Data and transaction contract
 
 The only covered source is CPU `[0xf002a080,0xf002a100)`, corresponding to flash offset `[0x2a080,0x2a100)`. Staging derives its 128 bytes from the pinned original DAT and verifies SHA-256 `10fa7918107458a1b72e18ef91b9bfc27b6eb76e3b562aa6566c5561dcf4929a`. Each segment receives a checked immutable input. C independently validates metadata, file type, size and hash before recording execution. The media is never mapped as RAM or copied to a guest destination at initialization/reset.

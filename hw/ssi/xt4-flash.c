@@ -217,8 +217,10 @@ static const char *write_register(XT4FlashState *s, hwaddr off, uint32_t value,
         break;
     }
     case 0xe0:
-        if ((value & 0xffffff00U) != 0x13edfa00 &&
-            (value & 0xffffff00U) != 0x11edfa00) {
+        if (s->contract.part == XT4_NOR_PART_SELECTOR2C ?
+            ((value & 0xffffff00U) != 0x13edfa00 && value != 0xfa00) :
+            ((value & 0xffffff00U) != 0x13edfa00 &&
+             (value & 0xffffff00U) != 0x11edfa00)) {
             return "unsupported_flash_extensions";
         }
         break;
@@ -311,6 +313,14 @@ bool xt4_flash_array_snapshot(XT4FlashState *s, XT4FlashArraySnapshot *out,
     if (!s || !out || !s->calibration || s->busy ||
         (s->known & required) != required) {
         why = "unknown_calibration_flash_state";
+    } else if (s->contract.part == XT4_NOR_PART_SELECTOR2C) {
+        if ((REG(s, 0) & 0x41008009) != 0x8009 ||
+            (REG(s, 4) != 0x100334fd && REG(s, 4) != 0x110334fd) ||
+            REG(s, 0x14) != 0x111003 || REG(s, 0x10) != 1 ||
+            REG(s, 0xe0) != 0xfa00 || REG(s, 0xf0) ||
+            s->nor.protocol != XT4_NOR_SPI) {
+            why = "unsupported_calibration_flash_state";
+        }
     } else if ((REG(s, 0) & 0x41008009) != 0x41008009 ||
                (REG(s, 4) != 0x140333ee && REG(s, 4) != 0x150333ee) ||
                REG(s, 0x14) != 0x101003 || REG(s, 0x10) != 1 ||
@@ -338,13 +348,17 @@ bool xt4_flash_array_snapshot(XT4FlashState *s, XT4FlashArraySnapshot *out,
 void xt4_flash_set_contract(XT4FlashState *s, const XT4FlashContract *c)
 {
     g_assert_cmpuint(c->transaction_latency_ns, ==, 64);
-    g_assert_cmpuint(c->cr2_typical_settle_ns, ==, 40);
+    g_assert(c->part == XT4_NOR_PART_MX25 || c->part == XT4_NOR_PART_SELECTOR2C);
+    bool selector2c = c->part == XT4_NOR_PART_SELECTOR2C;
+    g_assert_cmpuint(c->cr2_typical_settle_ns, ==, selector2c ? 0 : 40);
     g_assert_cmpuint(c->initial_command_word, ==, 0);
     g_assert_cmpuint(c->initial_opcode_extensions, ==, 0x13edfa00);
     g_assert_cmpuint(c->initial_write_completion, ==, 0x10005);
     g_assert_cmpuint(c->initial_variant_word, ==, 0);
-    g_assert_cmpstr(c->stig_protocol_policy, ==, XT4_FLASH_PROTOCOL_POLICY);
+    g_assert_cmpstr(c->stig_protocol_policy, ==, selector2c ?
+                    XT4_FLASH_PROTOCOL_POLICY_2C : XT4_FLASH_PROTOCOL_POLICY);
     s->contract = *c;
+    s->nor.part = c->part;
 }
 
 void xt4_flash_set_event_callback(XT4FlashState *s, XT4FlashEventFn cb, void *opaque)

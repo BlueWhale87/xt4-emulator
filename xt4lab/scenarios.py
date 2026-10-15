@@ -64,18 +64,23 @@ class ExplorationScenario:
     transfer: TransferScenario | None = None
 
 
-def load_scenario(name: str, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False, transfer: bool = False) -> ExplorationScenario:
+def load_scenario(name: str, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False, transfer: bool = False, selector2c: bool = False) -> ExplorationScenario:
+    if selector2c and not (flash and phy and transfer):
+        raise ValueError('Selector2c requires its calibration profile')
     if name not in ('zero-ports-v1', 'one-ports-v1'):
         raise ValueError('Unsupported synthetic scenario')
     return ExplorationScenario(name, (0 if name == 'zero-ports-v1' else 0xffffffff,) * 16,
         TimerScenario(54000000, True, True, 0, True) if timer else None,
-        PlatformScenario((0 if name == 'zero-ports-v1' else 0xffffffff,) * 16, 1) if platform else None, FlashScenario() if flash else None, PhyScenario() if phy else None, TransferScenario() if transfer else None)
+        PlatformScenario((0 if name == 'zero-ports-v1' else 0xffffffff,) * 16, 1) if platform else None, (FlashScenario(virtual_part='selector2c-spi-boot-v1', cr2_typical_settle_ns=0,
+            stig_protocol_policy='spi-selector2c-exploration-v1') if selector2c else FlashScenario()) if flash else None,
+        PhyScenario() if phy else None, (TransferScenario(sample_policy='ideal-taps0-127-phases16-17-v1')
+            if selector2c else TransferScenario()) if transfer else None)
 
 
-def validate_scenario(scenario: ExplorationScenario, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False, transfer: bool = False) -> None:
+def validate_scenario(scenario: ExplorationScenario, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False, transfer: bool = False, selector2c: bool = False) -> None:
     if not isinstance(scenario, ExplorationScenario):
         raise ValueError('Explicit synthetic scenario required')
-    expected = load_scenario(scenario.scenario_id, timer=timer, platform=platform, flash=flash, phy=phy, transfer=transfer)
+    expected = load_scenario(scenario.scenario_id, timer=timer, platform=platform, flash=flash, phy=phy, transfer=transfer, selector2c=selector2c)
     if (type(scenario.port_inputs) is not tuple or len(scenario.port_inputs) != 16
             or any(type(v) is not int or not 0 <= v <= 0xffffffff for v in scenario.port_inputs)
             or scenario != expected):
@@ -131,10 +136,10 @@ def scenario_dict(scenario: ExplorationScenario | None) -> dict | None:
     return json.loads(json.dumps(data))
 
 
-def scenario_from_dict(data: dict, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False, transfer: bool = False) -> ExplorationScenario:
+def scenario_from_dict(data: dict, *, timer: bool, platform: bool = False, flash: bool = False, phy: bool = False, transfer: bool = False, selector2c: bool = False) -> ExplorationScenario:
     if not isinstance(data, dict):
         raise ValueError('Missing synthetic scenario declaration')
-    expected = load_scenario(data.get('scenario_id'), timer=timer, platform=platform, flash=flash, phy=phy, transfer=transfer)
+    expected = load_scenario(data.get('scenario_id'), timer=timer, platform=platform, flash=flash, phy=phy, transfer=transfer, selector2c=selector2c)
     # Canonical JSON also distinguishes booleans/floats from integer words.
     if json.dumps(data, sort_keys=True, separators=(',', ':')) != json.dumps(
             scenario_dict(expected), sort_keys=True, separators=(',', ':')):

@@ -17,7 +17,7 @@ def main():
     run.add_argument('--profile',choices=['module-entry-diagnostic','bootstrap-entry-diagnostic',
                                        'bootstrap-port-config-diagnostic',
                                        'bootstrap-input-exploration','bootstrap-timer-exploration',
-                                       'bootstrap-controller-exploration','bootstrap-flash-exploration','bootstrap-phy-exploration','bootstrap-calibration-exploration','validation'],
+                                       'bootstrap-controller-exploration','bootstrap-flash-exploration','bootstrap-phy-exploration','bootstrap-calibration-exploration','bootstrap-selector2c-exploration','validation'],
                      default='module-entry-diagnostic')
     run.add_argument('--steps',type=int,default=1000)
     run.add_argument('--interactive',action='store_true')

@@ -9,6 +9,8 @@
 #define XT4_FLASH_MODEL "xt4-cadence-stig-exploration-v1"
 #define XT4_NOR_MODEL "mx25um51245gxdi00-boot-v1"
 #define XT4_FLASH_PROTOCOL_POLICY "dual-opcode-8d-exploration-v1"
+#define XT4_NOR_MODEL_2C "selector2c-spi-boot-v1"
+#define XT4_FLASH_PROTOCOL_POLICY_2C "spi-selector2c-exploration-v1"
 OBJECT_DECLARE_SIMPLE_TYPE(XT4FlashState, XT4_FLASH)
 typedef struct XT4CalibrationTransferState XT4CalibrationTransferState;
 
@@ -21,6 +23,7 @@ typedef struct XT4FlashArraySnapshot {
 } XT4FlashArraySnapshot;
 
 typedef struct XT4FlashContract {
+    XT4NorPart part;
     uint64_t transaction_latency_ns, cr2_typical_settle_ns;
     uint32_t initial_command_word, initial_opcode_extensions;
     uint32_t initial_write_completion, initial_variant_word;
