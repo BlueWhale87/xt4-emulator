@@ -2,6 +2,7 @@
 testblock = declare_dependency(dependencies: [block], sources: 'iothread.c')
 
 tests = {
+  'test-xt4-nor-covered': ['../../hw/block/xt4-nor-covered.c'],
   'test-xt4-nor-boot': ['../../hw/block/xt4-nor-boot.c'],
   'check-block-qdict': [],
   'check-qdict': [],
