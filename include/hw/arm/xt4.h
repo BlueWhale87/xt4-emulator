@@ -37,6 +37,8 @@ struct XT4State {
     XT4PortsState *ports;
     const char *pending_device, *pending_detail;
     char *run_dir;
+    char *scenario_id, *scenario_sha256;
+    uint32_t port_inputs[16];
     const XT4ProfileDefinition *profile;
     MemoryRegion ram[6], unknown;
     uint8_t *images[6];

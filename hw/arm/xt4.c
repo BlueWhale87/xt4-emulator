@@ -30,7 +30,7 @@ struct XT4ProfileDefinition {
     uint32_t entry, sp;
     const XT4RegionDefinition *regions;
     size_t region_count;
-    bool port_config;
+    bool port_config, synthetic_inputs;
 };
 
 static const XT4RegionDefinition module_regions[] = {
@@ -52,11 +52,13 @@ static const XT4RegionDefinition bootstrap_regions[] = {
 
 static const XT4ProfileDefinition profiles[] = {
     { "module-entry-diagnostic", 0x012910c4, 0x80000000,
-      module_regions, G_N_ELEMENTS(module_regions), false },
+      module_regions, G_N_ELEMENTS(module_regions), false, false },
     { "bootstrap-entry-diagnostic", 0, 0,
-      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), false },
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), false, false },
     { "bootstrap-port-config-diagnostic", 0, 0,
-      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true },
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, false },
+    { "bootstrap-input-exploration", 0, 0,
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true },
 };
 
 static G_NORETURN void invalid(const char *message)
@@ -148,12 +150,15 @@ static void port_event(void *opaque, const XT4PortEvent *access)
     s->pending_value = access->value;
     s->pending_address = access->address;
     s->pending_width = access->width;
-    s->pending_device = access->success ? NULL : XT4_PORT_CONFIG_MODEL;
+    s->pending_device = access->success ? NULL : access->model;
     s->pending_detail = access->detail;
     QDict *event = qdict_new();
     qdict_put_str(event, "event", "device-access");
-    qdict_put_str(event, "device", XT4_PORT_CONFIG_MODEL);
-    qdict_put_str(event, "semantics", "inferred logical configuration; not electrical state");
+    qdict_put_str(event, "device", access->model);
+    qdict_put_str(event, "semantics", access->semantics);
+    if (s->scenario_id) {
+        qdict_put_str(event, "scenario", s->scenario_id);
+    }
     qdict_put_str(event, "operation", access->write ? "write" : "read");
     qdict_put_int(event, "address", access->address);
     qdict_put_int(event, "width", access->width);
@@ -239,6 +244,11 @@ static void reset(void *opaque)
     qdict_put_str(event, "event", "reset");
     qdict_put_bool(event, "camera_booted", false);
     qdict_put_str(event, "profile", s->profile->name);
+    if (s->scenario_id) {
+        qdict_put_str(event, "scenario", s->scenario_id);
+        qdict_put_str(event, "scenario_sha256", s->scenario_sha256);
+        qdict_put_str(event, "execution_class", "synthetic_exploration");
+    }
     QDict *registers = qdict_new();
     for (int i = 0; i < 16; i++) {
         g_autofree char *name = g_strdup_printf("r%d", i);
@@ -261,7 +271,49 @@ static void reset(void *opaque)
     emit(s, event);
 }
 
-static const XT4ProfileDefinition *validate_profile(int dir)
+static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
+                              XT4State *s)
+{
+    QObject *obj = qdict_get(p, "scenario");
+    if (!profile->synthetic_inputs) {
+        if (obj && qobject_type(obj) != QTYPE_QNULL) {
+            invalid("synthetic scenario not allowed on diagnostic profile");
+        }
+        return;
+    }
+    QDict *scenario = qobject_to(QDict, obj);
+    const char *id = scenario ? qdict_get_try_str(scenario, "scenario_id") : NULL;
+    if (!id || (strcmp(id, "zero-ports-v1") && strcmp(id, "one-ports-v1")) ||
+        qdict_size(scenario) != 3) {
+        invalid("explicit supported synthetic scenario required");
+    }
+    QList *words = qobject_to(QList, qdict_get(scenario, "port_inputs"));
+    QObject *timer = qdict_get(scenario, "timer");
+    if (!words || qlist_size(words) != 16 || !timer ||
+        qobject_type(timer) != QTYPE_QNULL) {
+        invalid("invalid synthetic scenario shape");
+    }
+    uint32_t expected = !strcmp(id, "zero-ports-v1") ? 0 : UINT32_MAX;
+    g_autoptr(GString) canonical = g_string_new("{\"port_inputs\":[");
+    const QListEntry *entry;
+    int i = 0;
+    QLIST_FOREACH_ENTRY(words, entry) {
+        QNum *number = qobject_to(QNum, qlist_entry_obj(entry));
+        uint64_t value;
+        if (!number || !qnum_get_try_uint(number, &value) || value != expected) {
+            invalid("scenario words differ from fixed synthetic identity");
+        }
+        s->port_inputs[i] = value;
+        g_string_append_printf(canonical, "%s%" PRIu32, i ? "," : "", expected);
+        i++;
+    }
+    g_string_append_printf(canonical, "],\"scenario_id\":\"%s\",\"timer\":null}", id);
+    s->scenario_id = g_strdup(id);
+    s->scenario_sha256 = g_compute_checksum_for_string(G_CHECKSUM_SHA256,
+                                                       canonical->str, -1);
+}
+
+static const XT4ProfileDefinition *validate_profile(int dir, XT4State *s)
 {
     size_t len;
     g_autofree uint8_t *text = read_file(dir, "profile.json", &len);
@@ -281,17 +333,22 @@ static const XT4ProfileDefinition *validate_profile(int dir)
     QObject *models_obj = qdict_get(p, "models");
     QList *models = qobject_to(QList, models_obj);
     if ((models_obj && !models) ||
-        (profile->port_config ? !models || qlist_size(models) != 1 :
+        (profile->port_config ? !models || qlist_size(models) != (profile->synthetic_inputs ? 2 : 1) :
                                models && qlist_size(models) != 0)) {
         invalid("unsupported device model set");
     }
     if (profile->port_config) {
-        const QListEntry *model_entry = qlist_first(models);
-        QString *name = qobject_to(QString, qlist_entry_obj(model_entry));
-        if (!name || strcmp(qstring_get_str(name), XT4_PORT_CONFIG_MODEL)) {
-            invalid("unsupported device model identity");
+        const char *expected[] = {XT4_PORT_CONFIG_MODEL, XT4_STATIC_PORT_INPUT_MODEL};
+        const QListEntry *entry;
+        int index = 0;
+        QLIST_FOREACH_ENTRY(models, entry) {
+            QString *name = qobject_to(QString, qlist_entry_obj(entry));
+            if (!name || strcmp(qstring_get_str(name), expected[index++])) {
+                invalid("unsupported device model identity");
+            }
         }
     }
+    validate_scenario(p, profile, s);
     QList *regions = qobject_to(QList, qdict_get(p, "regions"));
     QDict *regs = qobject_to(QDict, qdict_get(p, "registers"));
     if (!regions || qlist_size(regions) != profile->region_count ||
@@ -346,7 +403,7 @@ static void init(MachineState *machine)
     if (dir < 0) {
         invalid("cannot open run directory");
     }
-    s->profile = validate_profile(dir);
+    s->profile = validate_profile(dir, s);
     g_assert(s->profile->region_count <= G_N_ELEMENTS(s->ram));
     g_assert(s->profile->region_count <= G_N_ELEMENTS(s->images));
     int inputs = openat(dir, "inputs", O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
@@ -385,6 +442,9 @@ static void init(MachineState *machine)
     if (s->profile->port_config) {
         s->ports = XT4_PORT_CONFIG(qdev_new(TYPE_XT4_PORT_CONFIG));
         xt4_ports_set_event_callback(s->ports, port_event, s);
+        if (s->profile->synthetic_inputs) {
+            xt4_ports_set_inputs(s->ports, s->port_inputs);
+        }
         sysbus_realize_and_unref(SYS_BUS_DEVICE(s->ports), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(s->ports), 0, 0xfff41000);
         sysbus_mmio_map(SYS_BUS_DEVICE(s->ports), 1, 0xfff41500);

@@ -8,7 +8,7 @@
 #define ENTRY 0x012910c4
 #define SENTINEL 0x01022000
 
-static char *new_fixture_profile(const char *profile)
+static char *new_fixture_scenario(const char *profile, const char *scenario)
 {
     const char *root = g_getenv("XT4_RUN_ROOT");
     g_assert_nonnull(root);
@@ -18,15 +18,22 @@ static char *new_fixture_profile(const char *profile)
     char *run = g_build_filename(tmp, "run", NULL);
     const char *script = "from pathlib import Path; import sys; "
         "from xt4lab.firmware import prepare_run; "
-        "prepare_run(Path(sys.argv[1]).resolve(),Path(sys.argv[2]).resolve(),sys.argv[3])";
+        "prepare_run(Path(sys.argv[1]).resolve(),Path(sys.argv[2]).resolve(),sys.argv[3],"
+        "scenario_name=sys.argv[4] or None)";
     char *args[] = {(char *)g_getenv("XT4_PYTHON"), (char *)"-c", (char *)script,
-                   (char *)g_getenv("XT4_RESEARCH_ROOT"), run, (char *)profile, NULL};
+                   (char *)g_getenv("XT4_RESEARCH_ROOT"), run, (char *)profile,
+                   (char *)scenario, NULL};
     int status;
     g_assert_true(g_spawn_sync(g_getenv("XT4_SOURCE"), args, NULL, 0, NULL,
                               NULL, NULL, NULL, &status, NULL));
     g_assert_cmpint(status, ==, 0);
     g_free(tmp);
     return run;
+}
+
+static char *new_fixture_profile(const char *profile)
+{
+    return new_fixture_scenario(profile, "");
 }
 
 static char *new_fixture(void)
@@ -440,6 +447,40 @@ static void port_unsigned_fault_values(void)
     }
 }
 
+static void port_synthetic_inputs(void)
+{
+    const char *names[] = {"zero-ports-v1", "one-ports-v1"};
+    const uint32_t values[] = {0, UINT32_MAX};
+
+    for (int fixture = 0; fixture < 2; fixture++) {
+        g_autofree char *run = new_fixture_scenario("bootstrap-input-exploration",
+                                                   names[fixture]);
+        QTestState *q = start(run, false);
+        for (int port = 0; port < 16; port++) {
+            g_assert_cmphex(qtest_readl(q, 0xfff41014 + port * 0x40), ==, values[fixture]);
+            QDict *event = port_record(run);
+            g_assert_true(qdict_get_bool(event, "success"));
+            g_assert_cmpstr(qdict_get_str(event, "device"), ==, "xt4-static-port-input-v1");
+            g_assert_nonnull(strstr(qdict_get_str(event, "semantics"), "synthetic"));
+            g_assert_cmpstr(qdict_get_str(event, "scenario"), ==, names[fixture]);
+            qobject_unref(event);
+        }
+        qtest_writel(q, 0xfff41014, 0x12345678);
+        QDict *event = port_record(run);
+        g_assert_false(qdict_get_bool(event, "success"));
+        qobject_unref(event);
+        g_assert_cmphex(qtest_readl(q, 0xfff41014), ==, values[fixture]);
+        qtest_writel(q, 0xfff41018, 0x12345678);
+        qtest_writel(q, 0xfff41000, 0xffff0000);
+        g_assert_cmphex(qtest_readl(q, 0xfff41014), ==, values[fixture]);
+        qtest_system_reset(q);
+        qtest_readl(q, 0xfff41018);
+        port_state(run, false, 0, 0);
+        g_assert_cmphex(qtest_readl(q, 0xfff41014), ==, values[fixture]);
+        qtest_quit(q);
+    }
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -459,5 +500,6 @@ int main(int argc, char **argv)
     qtest_add_func("/xt4/ports/unknown-reads", port_unknown_reads);
     qtest_add_func("/xt4/ports/invalid", port_invalid_operations);
     qtest_add_func("/xt4/ports/unsigned-fault-values", port_unsigned_fault_values);
+    qtest_add_func("/xt4/ports/synthetic-inputs-reset", port_synthetic_inputs);
     return g_test_run();
 }

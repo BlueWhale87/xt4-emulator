@@ -25,6 +25,7 @@ Fujifilm firmware, decoded images, per-camera data and local runs are **not incl
 | Original bootstrap execution | Reproducible first hardware write; 14,731 instructions |
 | Port configuration model | 97 writes verified; next external input is unknown |
 | Full platform startup | Under investigation |
+| Explicit synthetic port inputs | Original bootstrap reaches first timer write with either declared fixture; exploration only |
 | Original menu display and virtual controls | Not implemented |
 | Virtual SD / settings storage | Not implemented |
 | SD recipe manager | Planned after menu and storage emulation |

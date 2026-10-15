@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import stat
 from .startup import ORIGINAL_SHA256, BOOTSTRAP_OFFSET, extract_bootstrap
+from .scenarios import ExplorationScenario, load_scenario, scenario_sha256, validate_scenario
 
 REPO = Path(__file__).resolve().parents[1]
 PROJECT = REPO.parents[1]
@@ -34,6 +35,7 @@ class BootProfile:
     regions: tuple[Region, ...]
     assumptions: tuple[str, ...]
     models: tuple[str, ...] = ()
+    scenario: ExplorationScenario | None = None
 
 
 @dataclass(frozen=True)
@@ -43,12 +45,13 @@ class PreparedRun:
     manifest: dict
 
 
-def load_profile(name: str) -> BootProfile:
+def load_profile(name: str, *, scenario_name: str | None = None) -> BootProfile:
     if name == 'validation':
         raise ValueError('missing_boot_state: loader-created CPU state is not recovered')
     profiles = {'module-entry-diagnostic': 'xt4-212.json',
                 'bootstrap-entry-diagnostic': 'xt4-212-bootstrap.json',
-                'bootstrap-port-config-diagnostic': 'xt4-212-ports.json'}
+                'bootstrap-port-config-diagnostic': 'xt4-212-ports.json',
+                'bootstrap-input-exploration': 'xt4-212-inputs.json'}
     if name not in profiles:
         raise ValueError('Unsupported profile')
     data = json.loads(Path(__file__).with_name('profiles').joinpath(profiles[name]).read_text())
@@ -56,6 +59,12 @@ def load_profile(name: str) -> BootProfile:
     data['regions'] = tuple(Region(**r) for r in data['regions'])
     data['assumptions'] = tuple(data['assumptions'])
     data['models'] = tuple(data.get('models', ()))
+    if name == 'bootstrap-input-exploration':
+        if scenario_name is None:
+            raise ValueError('Exploration requires an explicit synthetic scenario')
+        data['scenario'] = load_scenario(scenario_name, timer=False)
+    elif scenario_name is not None:
+        raise ValueError('Synthetic scenario is not allowed on this profile')
     profile = BootProfile(**data)
     validate_profile(profile)
     return profile
@@ -63,9 +72,14 @@ def load_profile(name: str) -> BootProfile:
 
 def validate_profile(profile: BootProfile) -> None:
     expected_models = {'module-entry-diagnostic': (), 'bootstrap-entry-diagnostic': (),
-                       'bootstrap-port-config-diagnostic': ('xt4-port-config-v1',)}
+                       'bootstrap-port-config-diagnostic': ('xt4-port-config-v1',),
+                       'bootstrap-input-exploration': ('xt4-port-config-v1', 'xt4-static-port-input-v1')}
     if profile.name not in expected_models or profile.models != expected_models[profile.name]:
         raise ValueError('Unsupported profile model set')
+    if profile.name == 'bootstrap-input-exploration':
+        validate_scenario(profile.scenario, timer=False)
+    elif profile.scenario is not None:
+        raise ValueError('Scenario is not allowed on a diagnostic profile')
     extents = []
     names = set()
     for r in sorted(profile.regions, key=lambda x: x.base):
@@ -124,8 +138,9 @@ def verify_prepared(run: PreparedRun) -> None:
                 raise ValueError('Staged image mismatch: ' + r.name)
 
 
-def prepare_run(research_root: Path, run_root: Path, profile_name: str) -> PreparedRun:
-    profile = load_profile(profile_name)
+def prepare_run(research_root: Path, run_root: Path, profile_name: str, *,
+                scenario_name: str | None = None) -> PreparedRun:
+    profile = load_profile(profile_name, scenario_name=scenario_name)
     research_root = research_root.absolute()
     run_root = run_root.absolute()
     if ('..' in run_root.parts or run_root != run_root.resolve()
@@ -164,6 +179,7 @@ def prepare_run(research_root: Path, run_root: Path, profile_name: str) -> Prepa
     manifest = {'schema_version': 1, 'original_sha256': ORIGINAL_SHA256,
                 'research_root': str(research_root), 'source_files': tuple(used_sources),
                 'profile_sha256': hashlib.sha256(json.dumps(profile_dict(profile), sort_keys=True).encode()).hexdigest()}
+    manifest['scenario_sha256'] = scenario_sha256(profile.scenario)
     if derived:
         manifest['derived_images'] = derived
     (run_root / 'profile.json').write_text(json.dumps(profile_dict(profile), indent=2) + '\n')

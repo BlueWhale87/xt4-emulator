@@ -15,6 +15,8 @@ struct XT4PortsState {
     SysBusDevice parent_obj;
     MemoryRegion ports_mmio, global_mmio;
     XT4PortRegister ports[16][8], global;
+    uint32_t inputs[16];
+    bool has_inputs;
     XT4PortEventFn callback;
     void *callback_opaque;
 };
@@ -29,6 +31,8 @@ static MemTxResult access_register(XT4PortsState *s, hwaddr offset,
         .value = write ? *value : 0,
         .port = global ? 0 : offset / 0x40,
         .selector = global ? 0 : (offset % 0x40) / 4,
+        .model = XT4_PORT_CONFIG_MODEL,
+        .semantics = "inferred logical configuration; not electrical state",
     };
     XT4PortRegister *reg = NULL;
     if (size != 4 || (offset & 3) ||
@@ -37,7 +41,15 @@ static MemTxResult access_register(XT4PortsState *s, hwaddr offset,
     } else {
         reg = global ? &s->global : &s->ports[event.port][event.selector];
         if (!global && event.selector == 5) {
-            event.detail = write ? "unsupported_port_write" : "unknown_port_input";
+            if (!write && s->has_inputs) {
+                event.value = event.state = s->inputs[event.port];
+                event.known_mask = UINT32_MAX;
+                event.model = XT4_STATIC_PORT_INPUT_MODEL;
+                event.semantics = "synthetic static input fixture; not physical camera state";
+                reg = NULL;
+            } else {
+                event.detail = write ? "unsupported_port_write" : "unknown_port_input";
+            }
         } else if (write) {
             if (global || event.selector <= 4) {
                 uint32_t mask = *value >> 16;
@@ -118,6 +130,12 @@ void xt4_ports_set_event_callback(XT4PortsState *s, XT4PortEventFn callback,
 {
     s->callback = callback;
     s->callback_opaque = opaque;
+}
+
+void xt4_ports_set_inputs(XT4PortsState *s, const uint32_t values[16])
+{
+    memcpy(s->inputs, values, sizeof(s->inputs));
+    s->has_inputs = true;
 }
 
 static void ports_reset(Object *obj, ResetType type)

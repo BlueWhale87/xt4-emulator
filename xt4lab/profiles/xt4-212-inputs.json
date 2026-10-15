@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "name": "bootstrap-input-exploration",
+  "cpu_type": "xt4-cortex-a7-arm-cpu",
+  "entry": 0,
+  "registers": {
+    "r0": 0,
+    "r1": 0,
+    "r2": 0,
+    "r3": 0,
+    "r4": 0,
+    "r5": 0,
+    "r6": 0,
+    "r7": 0,
+    "r8": 0,
+    "r9": 0,
+    "r10": 0,
+    "r11": 0,
+    "r12": 0,
+    "sp": 0,
+    "lr": 4294967280,
+    "cpsr": 467
+  },
+  "regions": [
+    {
+      "name": "bootstrap",
+      "base": 0,
+      "size": 110784,
+      "file": "inputs/bootstrap.bin",
+      "file_size": 51328,
+      "sha256": "bf2d1d4ca9d1d60e5125a964988a3f1852e177c3176d35dc59dcc63afe41f6b1",
+      "initialization": "original file then provisional zero allocation; firmware clears BSS and core-0 stack itself",
+      "confidence": "vector and stack literals corroborate this minimum envelope; permissions and untouched tail contents are provisional"
+    }
+  ],
+  "assumptions": [
+    "Exploratory bootstrap-vector entry; not measured architectural cold boot",
+    "Provisional R0-R12=0, SP=0, LR=0xfffffff0, CPSR=0x1d3 and CPU reset system-register state",
+    "Single-core diagnostic; other cores and release behavior unmodeled",
+    "Little-endian ARM state, MMU/caches disabled initially",
+    "RAM permissions and untouched tail zero allocation are hypotheses; original code performs its own BSS/stack clears",
+    "Synthetic exploration: explicit static full-word port samples, not physical camera state or a no-buttons condition. Configuration remains inferred; timer, IRQ, storage and calibration remain unknown."
+  ],
+  "models": [
+    "xt4-port-config-v1",
+    "xt4-static-port-input-v1"
+  ],
+  "scenario": null
+}

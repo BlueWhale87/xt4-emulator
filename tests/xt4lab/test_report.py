@@ -80,5 +80,59 @@ class ReportTests(unittest.TestCase):
             data = json.loads((p/'summary.json').read_text())
             self.assertEqual(data['models'], ['xt4-port-config-v1'])
 
+    def test_input_cli_requires_explicit_scenario(self):
+        with tempfile.TemporaryDirectory(dir=REPO/'runs') as tmp:
+            for index, name in enumerate([None, 'one-ports-v1']):
+                p = Path(tmp)/str(index)
+                args = [sys.executable, '-m', 'xt4lab', 'run', '--research-root',
+                    str(RESEARCH), '--out', str(p), '--profile',
+                    'bootstrap-input-exploration', '--steps', '1']
+                if name:
+                    args += ['--scenario', name]
+                result = subprocess.run(args, cwd=REPO, text=True, capture_output=True, timeout=10)
+                if not name:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(p.exists())
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    data = json.loads((p/'summary.json').read_text())
+                    self.assertEqual(data['scenario']['scenario_id'], name)
+                    self.assertEqual(data['execution_class'], 'synthetic_exploration')
+                    self.assertIn('synthetic', (p/'report.md').read_text().lower())
+
+    def test_legacy_report_without_scenario(self):
+        from xt4lab.report import write_report
+        with tempfile.TemporaryDirectory(dir=REPO/'runs') as tmp:
+            run = prepare_run(RESEARCH, Path(tmp)/'legacy-scenario', 'bootstrap-entry-diagnostic')
+            s = RunSession(run, REPO/'build/qemu-system-arm', budget=1)
+            s.step(); s.close()
+            p = run.directory/'run-info.json'; info = json.loads(p.read_text())
+            info['profile'].pop('scenario', None)
+            p.write_text(json.dumps(info)); write_report(run.directory)
+            data = json.loads((run.directory/'summary.json').read_text())
+            self.assertTrue('scenario' in data, 'legacy report lacks scenario compatibility')
+            self.assertIsNone(data['scenario'])
+            self.assertIsNone(data['scenario_sha256'])
+            self.assertEqual(data['execution_class'], 'diagnostic')
+
+    def test_exploration_report_cannot_lose_scenario_identity(self):
+        from xt4lab.report import write_report
+        with tempfile.TemporaryDirectory(dir=REPO/'runs') as tmp:
+            run = prepare_run(RESEARCH, Path(tmp)/'identity', 'bootstrap-input-exploration',
+                              scenario_name='zero-ports-v1')
+            s = RunSession(run, REPO/'build/qemu-system-arm', budget=1)
+            s.step(); s.close()
+            p = run.directory/'run-info.json'; original = p.read_text()
+            for mutation in ['missing', 'hash', 'boolean', 'words']:
+                with self.subTest(mutation=mutation):
+                    info = json.loads(original)
+                    if mutation == 'missing': info['profile'].pop('scenario')
+                    elif mutation == 'hash': info['provenance']['scenario_sha256'] = '0' * 64
+                    elif mutation == 'boolean': info['profile']['scenario']['port_inputs'][0] = False
+                    else: info['profile']['scenario']['port_inputs'][0] = 1
+                    p.write_text(json.dumps(info))
+                    with self.assertRaises(ValueError):
+                        write_report(run.directory)
+
 if __name__=='__main__':
     unittest.main()

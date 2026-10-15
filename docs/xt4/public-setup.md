@@ -68,3 +68,6 @@ Use a new output directory for each run, without commas in its path. Expected cu
 The [bootstrap investigation](startup.md) includes the newer profile and its 14,731-instruction hardware checkpoint. Use its `--steps 30000` command to reproduce that path.
 
 The [port configuration model guide](port-bank.md) has the latest `bootstrap-port-config-diagnostic` command. It also needs only the original DAT. It records 97 modeled writes and stops on an unknown external input after 19,613 instructions. QEMU runs headlessly at this stage; view the generated `report.md` and `device-events.json`. A native camera menu window is not yet implemented.
+
+
+For the next checkpoint, select `--profile bootstrap-input-exploration` with an explicit `--scenario zero-ports-v1` or `one-ports-v1`. The [port guide](port-bank.md#explicit-synthetic-input-exploration) describes these synthetic fixtures and the verified first timer write. Omitting the scenario fails before staging; supplying it to a diagnostic profile is rejected. This profile remains headless and cannot establish authentic boot state.

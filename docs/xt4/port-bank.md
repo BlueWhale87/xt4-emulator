@@ -57,3 +57,18 @@ python3.13 -m xt4lab run \
 Expected: 19,613 completed instructions and stop on attempt 19,614 at `0xfff41014`, detail `unknown_port_input`. Open `report.md` for the readable result. `device-events.json` contains the 97 successful state updates plus the rejected input read, with state/known masks and source evidence. CPU and device-event hashes are separate. Virtual reset preserves earlier segment files while the report counts modeled operations in the latest segment only.
 
 QEMU currently runs without a display window. These reports show execution progress; original camera menus require later display, input, storage and platform modeling.
+
+## Explicit synthetic input exploration
+
+`bootstrap-input-exploration` adds `xt4-static-port-input-v1`. It requires an explicit `--scenario zero-ports-v1` or `--scenario one-ports-v1`, declaring sixteen static 32-bit zero or all-one samples. Neither fixture establishes real pin levels, button wiring or a normal camera state. The three earlier diagnostics remain unchanged and never inherit synthetic samples.
+
+Original firmware has now completed the 97 configuration writes and all sixteen input reads/cache stores under both fixtures, then stopped at the first unmodeled timer write: PC `0x4f34`, address `0xfff3c348`, width 4, value 540,000. The input values do not choose this first timer path. This is a synthetic exploration checkpoint; original menus and physical compatibility remain unestablished.
+
+```sh
+python3.13 -m xt4lab run \
+  --research-root ../../research/2026-10-14-xt4-firmware \
+  --out runs/inputs-first-timer \
+  --profile bootstrap-input-exploration --scenario zero-ports-v1 --steps 30000
+```
+
+The full scenario and canonical scenario hash are retained in run metadata and reset evidence. Each successful synthetic sample has a distinct model identity and semantics in `device-events.json`. Configuration/reset tests prove samples are independent of configuration writes, while virtual reset clears configuration knowledge and retains the selected static fixture. No timer or input interrupt behavior is added by this profile.

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from .firmware import REPO, read_regular
 from .run import write_json
+from .scenarios import scenario_from_dict, scenario_sha256
 
 
 def write_report(run_dir: Path) -> Path:
@@ -11,6 +12,16 @@ def write_report(run_dir: Path) -> Path:
     if run_dir != run_dir.resolve() or not run_dir.is_relative_to(REPO/'runs'):
         raise ValueError('Report must refer to a regular project run')
     info = json.loads(read_regular(run_dir,'run-info.json'))
+    scenario = info['profile'].get('scenario')
+    if info['profile']['name'] in ('bootstrap-input-exploration', 'bootstrap-timer-exploration'):
+        decoded = scenario_from_dict(scenario,
+            timer=info['profile']['name'] == 'bootstrap-timer-exploration')
+    else:
+        if scenario is not None:
+            raise ValueError('Synthetic scenario on a diagnostic report')
+        decoded = None
+    if info['provenance'].get('scenario_sha256') != scenario_sha256(decoded):
+        raise ValueError('Report scenario fingerprint mismatch')
     engine = json.loads(read_regular(run_dir,'engine-build.json'))
     events = [json.loads(line) for line in read_regular(run_dir,'trace.jsonl').decode().splitlines() if line]
     starts = [e for e in events if e['event']=='start']
@@ -55,6 +66,9 @@ def write_report(run_dir: Path) -> Path:
     modeled_writes = sum(e['success'] and e['operation']=='write' for e in device_events)
     modeled_reads = sum(e['success'] and e['operation']=='read' for e in device_events)
     summary = {'schema_version':1,'camera_booted':False,
+        'scenario':info['profile'].get('scenario'),
+        'scenario_sha256':info['provenance'].get('scenario_sha256'),
+        'execution_class':'synthetic_exploration' if info['profile'].get('scenario') else 'diagnostic',
         'profile':info['profile']['name'], 'assumptions':info['profile']['assumptions'],
         'models':info['profile'].get('models', []),
         'modeled_write_count':modeled_writes,'modeled_read_count':modeled_reads,
@@ -91,6 +105,12 @@ def write_report(run_dir: Path) -> Path:
             'These are inferred logical configuration effects. Electrical behavior, reset '
             'readback and external pin samples are not established. Rejected reads return no value.',
             'Operation/state evidence: [device-events.json](device-events.json).']
+    if summary['scenario']:
+        lines += ['', '## Synthetic exploration', '',
+            f"Scenario: `{summary['scenario']['scenario_id']}`; SHA256 `{summary['scenario_sha256']}`.",
+            'Input words are an explicit static synthetic fixture. They do not establish '
+            'physical camera levels or a normal/no-buttons boot condition. '
+            'This run cannot establish compatibility or physical-camera safety.']
     lines += ['', '## Assumptions', '', *('- '+a for a in summary['assumptions']), '',
         '## Reproducibility', '', f"- Original DAT SHA256: `{summary['original_sha256']}`",
         f"- Engine SHA256: `{summary['engine_sha256']}`",
