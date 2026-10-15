@@ -55,7 +55,7 @@ python3.13 -m xt4lab run \
   --profile bootstrap-entry-diagnostic --steps 30000
 ```
 
-Next work is to identify the register bank and its required behavior, then trace subsequent clock/reset, flash/DMA and operating-system dependencies. Preserve both diagnostic baselines. Do not force the context flag, skip calls, inject RTOS globals or return guessed successful hardware responses to manufacture progress.
+The [port-bank investigation](port-bank.md) now describes the first register interface and the following external-input and timer dependencies. Those devices remain unimplemented. Subsequent clock/reset, flash/DMA and operating-system dependencies still need tracing. Preserve both diagnostic baselines. Do not force the context flag, skip calls, inject RTOS globals or return guessed successful hardware responses to manufacture progress.
 
 A supported runtime checkpoint still precedes framebuffer, controls and virtual SD work. Menus remain an unachieved goal.
 
