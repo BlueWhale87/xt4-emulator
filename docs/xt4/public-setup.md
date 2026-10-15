@@ -59,8 +59,10 @@ python3.13 -m xt4lab run \
   --profile module-entry-diagnostic --steps 1000
 ```
 
-The full suite includes firmware-backed tests and therefore requires your local update and decoded inputs. It also exercises the built QEMU machine. The decoder's small unit suite needs no firmware or camera.
+The full suite includes both diagnostic profiles and therefore requires your local update and decoded inputs. The bootstrap profile alone needs only the original DAT and derives its small checked image at staging time. It also exercises the built QEMU machine. The decoder's small unit suite needs no firmware or camera.
 
 Use a new output directory for each run, without commas in its path. Expected current result: eight completed original instructions followed by `unsupported_access` at PC `0x01291024`, reading one byte at `0x00e20008`. Read `report.md` in the output directory. This is a dependency trace, not a successful camera boot.
 
 `--profile validation` deliberately refuses to run because authentic boot state is incomplete. See [the runner guide](foundation.md) for pause, reset and reporting controls.
+
+The [bootstrap investigation](startup.md) includes the newer profile and its 14,731-instruction hardware checkpoint. Use its `--steps 30000` command to reproduce that path.

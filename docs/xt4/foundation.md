@@ -45,6 +45,6 @@ Pausing interrupts any running debugger step and consumes its reply before resum
 
 Two firmware-backed test runs on 15 October 2026 each completed eight original instructions, then stopped on their ninth attempt: a byte read at `0x00e20008`, from PC `0x01291024`. Their canonical traces matched and the original input hashes remained unchanged. Its association with loader-provided state is a research lead; the supplying object has not been recovered. Do not return a guessed byte, skip the call or fabricate a boot-ROM implementation to get past it.
 
-The next milestone is recovering genuine startup dependencies offline, followed by native framebuffer menus and controls, then virtual SD/settings operations. The recipe manager follows that working firmware/storage foundation. Emulator behavior applies to modeled paths and cannot establish physical-camera recovery or firmware safety.
+The [bootstrap diagnostic](startup.md) now executes a recovered earlier startup boundary for 14,731 instructions, stopping at its first unknown hardware write. Remaining platform dependencies precede native framebuffer menus and controls, then virtual SD/settings operations. The recipe manager follows that working firmware/storage foundation. Emulator behavior applies to modeled paths and cannot establish physical-camera recovery or firmware safety.
 
 The roadmap is summarized in the [project README](../../README.md). Recovered startup dependencies and their remaining unknowns are tracked in the [startup investigation](startup.md).

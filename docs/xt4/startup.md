@@ -1,6 +1,8 @@
 # Startup dependency investigation
 
-Status: offline analysis, 15 October 2026. The emulator still stops after eight completed instructions; the newly located regions below have **not yet been integrated into its memory profile**. No camera was accessed for this investigation.
+Status: offline analysis and original-bootstrap execution, 15 October 2026. The new `bootstrap-entry-diagnostic` completes **14,731 original instructions** and stops at its first unmodeled hardware write. Two runs matched. No camera was accessed. Menus have not booted.
+
+The original `module-entry-diagnostic` remains available as the eight-instruction regression baseline. The bootstrap profile maps only the recovered low bootstrap and its evidenced RAM envelope; the additional context/support/storage regions below are recovered research inputs, not yet a complete runtime memory map.
 
 ## First missing object recovered
 
@@ -8,7 +10,7 @@ The first diagnostic stop is a byte read at `0x00e20008`, from PC `0x01291024`. 
 
 Its SHA-256 is `41ca21d9445075090441de329567b9fa459f9be4ccf54b7e51ad0637884d8d3e`. The first four words are pointers `0x00e20040`, `0x00e201ec`, the value zero, and pointer `0x00e201cc`. The object includes the module table that corroborates the primary and secondary load addresses.
 
-Bootstrap code copies `0x400` bytes from flash offset `0x140000` to RAM `0x00e20000` on one branch. The update container's payload begins at DAT offset `0x274`, accounting for the different flash and file offsets. Another branch writes word `1` at context offset `+8`. The source bytes alone therefore do not establish the value seen at every module-entry boundary.
+Bootstrap code copies `0x400` bytes from flash offset `0x140000` to RAM `0x00e20000` on one branch. For these uncompressed flash-layout regions, the DAT file range is shifted by `0x274` from the corresponding flash offset; this is not a general mapping for decompressed program addresses. Another branch writes word `1` at context offset `+8`. The source bytes alone therefore do not establish the value seen at every module-entry boundary.
 
 Observed statically: the branch tests bootstrap global `0x0000b060`; its packaged initial value is `1`. The complete reset/runtime provenance of that global and the appropriate primary-entry state still require tracing. Loading the source object is a useful diagnostic boundary, but cannot yet be called an authentic cold boot.
 
@@ -28,9 +30,32 @@ All five slices use XOR `0xff`. Bootstrap vector words target low addresses incl
 
 The primary startup path calls support function `0x00049d4c` from `0x0127ef78`. This introduces scheduler/allocator startup dependencies that must be explained alongside the context block. Mapping code alone does not supply initialized operating-system state.
 
-## Next checkpoint
+## Verified bootstrap checkpoint
 
-Trace context writers, support-module initialization and the first hardware dependencies. Then extend the diagnostic profile with independently pinned source slices and record the next precise stop. Preserve the existing trace as a regression baseline. Do not force the context flag, skip calls, or return guessed successful hardware responses to manufacture progress.
+The profile enters the original vector at address zero, which loads PC `0x100`. It maps initialized bytes `[0,0xc880)` and RAM through `0x1b0c0`, based on the BSS and stack literals. Original instructions clear BSS `[0xc880,0x110c0)` and the core-0 stack subsection `[0x110c0,0x12cc0)`; they also set banked stack pointers. The observed loops contain 4,625 executions of the conditional BSS-store instruction (including its final false condition) and 224 eight-register stack-clear stores.
+
+After **14,731 completed instructions**, attempt **14,732** stops with:
+
+| Field | Observed value |
+| --- | --- |
+| Reason | `unsupported_access` |
+| PC | `0x00004f34` |
+| Physical address | `0xfff41018` |
+| Access | 32-bit write |
+| Attempted value | `0xc0ff3f0f` |
+
+This matches the independent static prediction from `0x1244 -> 0x41ec -> 0x4f2c`. The register's behavior remains unknown; no device model accepted this write. The source-initialized global `0xb060=1`, provisional incoming CPU state, one-core execution, writable RAM and untouched tail zero allocation remain disclosed assumptions. This is a bootstrap-vector diagnostic, not measured architectural power-on state.
+
+Run with the original DAT in the external research directory (decoded large segments are unnecessary for this profile):
+
+```sh
+python3.13 -m xt4lab run \
+  --research-root ../../research/2026-10-14-xt4-firmware \
+  --out runs/bootstrap-first-hardware \
+  --profile bootstrap-entry-diagnostic --steps 30000
+```
+
+Next work is to identify the register bank and its required behavior, then trace subsequent clock/reset, flash/DMA and operating-system dependencies. Preserve both diagnostic baselines. Do not force the context flag, skip calls, inject RTOS globals or return guessed successful hardware responses to manufacture progress.
 
 A supported runtime checkpoint still precedes framebuffer, controls and virtual SD work. Menus remain an unachieved goal.
 
@@ -38,4 +63,4 @@ A supported runtime checkpoint still precedes framebuffer, controls and virtual 
 
 Source: the separately obtained official X-T4 2.12 `FWUP0024.DAT`, 51,278,280 bytes, SHA-256 `853d273b5603d3a2b93493f0ebd6a762b0b4b6bdc70317777775ae5f8ed93bc5`. For a slice, read the exact original file range, invert every byte, and compare its hash above. Do not upload the recovered bytes to this repository.
 
-These findings describe static instructions and data. The public runner has not executed the recovered bootstrap or established processor reset state, startup branch selection, interrupts, timers, persistent configuration, calibration, display or storage hardware behavior.
+The source/layout findings are static analysis; the bootstrap checkpoint above is observed emulation under its recorded assumptions. Neither establishes architectural processor reset state, all startup branches, interrupts, timers, persistent configuration, calibration, display or storage hardware behavior.

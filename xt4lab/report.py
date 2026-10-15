@@ -57,7 +57,7 @@ def write_report(run_dir: Path) -> Path:
     lines = ['# X-T4 offline firmware execution report','',
         f"Completed **{len(pcs)} original firmware instructions** in the latest segment.",
         f"Stop: **{stop['reason']}**.",'',
-        'This is a module-entry diagnostic using a synthetic stack and provisional startup state. '
+        f"Profile: `{info['profile']['name']}`. This run uses the recorded diagnostic starting state. "
         'Full camera boot, menus and SD support remain unimplemented. No physical camera was accessed.','',
         '## Observed stop','']
     if summary['interrupted_attempts']:

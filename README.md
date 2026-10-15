@@ -2,7 +2,7 @@
 
 An experimental Fujifilm X-T4 machine for QEMU, with a bounded execution runner and reproducible dependency reports. The long-term goal is to run the original camera menus and virtual SD storage before developing an SD recipe manager.
 
-**Current result: eight original firmware instructions execute, then the diagnostic run stops at missing startup state. Camera menus do not boot yet.** Display, controls, storage, interrupts and full platform startup remain work in progress.
+**Current result: 14,731 original bootstrap instructions execute, then stop at the first unknown hardware register. Camera menus do not boot yet.** Display, controls, storage, interrupts and full platform startup remain work in progress.
 
 The project runs entirely on the host. Its runner exposes no camera connection, USB passthrough, host networking or physical storage devices. It does not modify or install camera firmware.
 
@@ -22,12 +22,13 @@ Fujifilm firmware, decoded images, per-camera data and local runs are **not incl
 | Checked firmware loading and isolated run controls | Implemented |
 | Precise unknown-memory and exception stops | Implemented |
 | Original firmware entry trace | Reproducible; eight completed instructions |
-| Authentic bootstrap / platform startup | Under investigation |
+| Original bootstrap execution | Reproducible first hardware write; 14,731 instructions |
+| Full platform startup | Under investigation |
 | Original menu display and virtual controls | Not implemented |
 | Virtual SD / settings storage | Not implemented |
 | SD recipe manager | Planned after menu and storage emulation |
 
-The initial diagnostic profile assumes one Cortex-A7 core, a synthetic stack, disabled MMU/caches and explicitly recorded zero-filled RAM. It is not a cold-boot reconstruction. Unknown hardware stops execution; the emulator does not fabricate successful device responses.
+Both profiles assume one Cortex-A7 core, disabled MMU/caches initially and explicitly recorded zero allocation. The original module-entry profile uses a synthetic stack; the new bootstrap profile executes original stack setup. Neither is a measured cold-boot reconstruction. Unknown hardware stops execution; the emulator does not fabricate successful device responses.
 
 Emulation results apply only to modeled behavior. They do not establish physical-camera recovery or firmware safety.
 
