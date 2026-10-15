@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "module-entry-diagnostic",
+  "cpu_type": "xt4-cortex-a7-arm-cpu",
+  "entry": 19468484,
+  "registers": {"r0":0,"r1":0,"r2":0,"r3":0,"r4":0,"r5":0,"r6":0,"r7":0,"r8":0,"r9":0,"r10":0,"r11":0,"r12":0,"sp":2147483648,"lr":4294967280,"cpsr":467},
+  "regions": [
+    {"name":"primary","base":16912384,"size":7421952,"file":"inputs/primary.bin","file_size":7420408,"sha256":"0b5b0fb0ee5fe6b109dae9964b5cddfe18edab46b4a0c195f9da194448906eeb","initialization":"file then zero padding","confidence":"loader map; provisional RWX and zero padding"},
+    {"name":"secondary","base":31518720,"size":9437184,"file":"inputs/secondary.bin","file_size":9437184,"sha256":"e1ef8b30903d3078fde103cdd134fca7bfc4337d67bcaf55c3080ffd5fd93b13","initialization":"file","confidence":"loader map; provisional RWX"},
+    {"name":"wireless","base":60264448,"size":10240000,"file":"inputs/wireless.bin","file_size":10240000,"sha256":"6c8d7b8b0a37df8c2b636c504c07a80318243b313d5bf435e2c39ef3f56e9f80","initialization":"file","confidence":"loader map; provisional RWX"},
+    {"name":"primary-tail","base":24334336,"size":7184384,"file":null,"file_size":0,"sha256":null,"initialization":"zero","confidence":"loader extent; provisional initial contents"},
+    {"name":"secondary-tail","base":40955904,"size":19308544,"file":null,"file_size":0,"sha256":null,"initialization":"zero","confidence":"loader extent; provisional initial contents"},
+    {"name":"synthetic-stack","base":2147418112,"size":65536,"file":null,"file_size":0,"sha256":null,"initialization":"zero","confidence":"diagnostic invention, not measured camera RAM"}
+  ],
+  "assumptions": ["Exploratory post-loader module entry; not cold boot", "Synthetic stack at 0x7fff0000, SP=0x80000000", "Provisional starting registers and CPU reset system-register state", "Single-core diagnostic; four-core startup is unmodeled", "Little-endian ARM state, MMU/caches disabled", "RAM permissions and zero-filled tails/padding are hypotheses", "Boot ROM, loader handoff state, calibration and device models unavailable"]
+}
