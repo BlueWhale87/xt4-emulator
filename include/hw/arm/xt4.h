@@ -45,6 +45,8 @@ struct XT4State {
     XT4TransferState *transfer;
     XT4ClockApplyState *clock_apply;
     XT4FlashState *flash;
+    XT4PhyState *phy;
+    XT4PhyContract phy_contract;
     XT4FlashContract flash_contract;
     const char *pending_device, *pending_detail;
     char *run_dir;

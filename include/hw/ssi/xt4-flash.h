@@ -3,6 +3,7 @@
 #define HW_SSI_XT4_FLASH_H
 #include "hw/core/sysbus.h"
 #include "hw/block/xt4-nor-boot.h"
+#include "hw/ssi/xt4-phy.h"
 
 #define TYPE_XT4_FLASH "xt4-cadence-stig-exploration"
 #define XT4_FLASH_MODEL "xt4-cadence-stig-exploration-v1"
@@ -33,5 +34,6 @@ typedef bool (*XT4FlashCompletionGuard)(void *);
 void xt4_flash_set_contract(XT4FlashState *, const XT4FlashContract *);
 void xt4_flash_set_event_callback(XT4FlashState *, XT4FlashEventFn, void *);
 void xt4_flash_set_completion_guard(XT4FlashState *, XT4FlashCompletionGuard, void *);
+void xt4_flash_set_phy(XT4FlashState *, XT4PhyState *);
 void xt4_flash_cancel_pending(XT4FlashState *);
 #endif

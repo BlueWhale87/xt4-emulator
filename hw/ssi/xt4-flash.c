@@ -13,6 +13,7 @@ struct XT4FlashState {
     MemoryRegion mmio;
     QEMUTimer *timer;
     XT4FlashContract contract;
+    XT4PhyState *phy;
     uint32_t reg[64];
     uint64_t known;
     bool busy;
@@ -134,8 +135,18 @@ static const char *write_register(XT4FlashState *s, hwaddr off, uint32_t value,
     }
     switch (off) {
     case 0:
-        if ((value & ~(CONFIG_MASK | (1U << 31))) || (value & (0xfU << 10))) {
+        if ((value & ~(CONFIG_MASK | (1U << 31) | (s->phy ? 8U : 0))) ||
+            (value & (0xfU << 10))) {
             return "unsupported_flash_config";
+        }
+        if (s->phy) {
+            const char *detail = NULL;
+            if ((value & 8) && !(value & 1)) {
+                return "disabled_phy_controller";
+            }
+            if (!xt4_phy_set_controller_config(s->phy, (value & 9) == 9, &detail)) {
+                return detail;
+            }
         }
         value &= ~(1U << 31);
         break;
@@ -266,6 +277,11 @@ static const MemoryRegionOps flash_ops = {
     .valid = { .min_access_size = 1, .max_access_size = 8, .unaligned = true },
     .impl = { .min_access_size = 1, .max_access_size = 8, .unaligned = true },
 };
+
+void xt4_flash_set_phy(XT4FlashState *s, XT4PhyState *phy)
+{
+    s->phy = phy;
+}
 
 void xt4_flash_set_contract(XT4FlashState *s, const XT4FlashContract *c)
 {

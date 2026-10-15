@@ -36,7 +36,7 @@ struct XT4ProfileDefinition {
     uint32_t entry, sp;
     const XT4RegionDefinition *regions;
     size_t region_count;
-    bool port_config, synthetic_inputs, timer_model, platform_model, flash_model;
+    bool port_config, synthetic_inputs, timer_model, platform_model, flash_model, phy_model;
 };
 
 static const XT4RegionDefinition module_regions[] = {
@@ -71,6 +71,8 @@ static const XT4ProfileDefinition profiles[] = {
       bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true },
     { "bootstrap-flash-exploration", 0, 0,
       bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true },
+    { "bootstrap-phy-exploration", 0, 0,
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true, true },
 };
 
 static G_NORETURN void invalid(const char *message)
@@ -120,6 +122,9 @@ void xt4_record_stop(XT4State *s, CPUState *cs, const XT4Stop *stop)
         return;
     }
     s->stopped = true;
+    if (s->phy) {
+        xt4_phy_cancel_pending(s->phy);
+    }
     if (s->flash) {
         xt4_flash_cancel_pending(s->flash);
     }
@@ -455,6 +460,44 @@ static void flash_event(void *opaque, const XT4FlashEvent *access)
     }
 }
 
+static void phy_event(void *opaque, const XT4PhyEvent *access)
+{
+    XT4State *s = opaque;
+    QDict *event = platform_event(s, XT4_PHY_MODEL,
+        "synthetic digital PHY locks/reset/deadlines; no electrical/data-eye/calibration result",
+        access->address, access->width, access->value, access->write,
+        access->success, access->detail, access->transition, access->virtual_ns);
+    if (access->transition) {
+        qdict_put_str(event, "operation", access->phase);
+    }
+    qdict_put_str(event, "phase", access->phase);
+    qdict_put_bool(event, "busy", access->busy);
+    qdict_put_bool(event, "controller_known", access->controller_known);
+    qdict_put_bool(event, "enabled", access->enabled);
+    qdict_put_bool(event, "configuration_known", access->configuration_known);
+    qdict_put_bool(event, "master_known", access->master_known);
+    qdict_put_bool(event, "fresh_master", access->fresh_master);
+    qdict_put_int(event, "configuration", access->configuration);
+    qdict_put_int(event, "master_control", access->master_control);
+    qdict_put_int(event, "observable", access->observable);
+    qdict_put_int(event, "epoch", access->epoch);
+    qdict_put_int(event, "deadline_ns", access->deadline_ns);
+    qdict_put_int(event, "master_lock_latency_ns", s->phy_contract.master_lock_latency_ns);
+    qdict_put_int(event, "dll_lock_latency_ns", s->phy_contract.dll_lock_latency_ns);
+    qdict_put_str(event, "reset_policy", XT4_PHY_RESET_POLICY);
+    emit(s, event);
+    if (access->transition && !access->success) {
+        XT4Stop stop = {
+            .reason = "unsupported_device_transition", .access = "timer",
+            .physical_address = access->address, .has_physical = true,
+            .device = XT4_PHY_MODEL, .detail = access->detail,
+        };
+        xt4_record_stop(s, CPU(s->cpu), &stop);
+        qemu_system_debug_request();
+        cpu_stop_current();
+    }
+}
+
 static MemTxResult unknown_read(void *opaque, hwaddr addr, uint64_t *value,
                                 unsigned size, MemTxAttrs attrs)
 {
@@ -505,6 +548,9 @@ static void reset(void *opaque)
     }
     if (s->flash) {
         device_cold_reset(DEVICE(s->flash));
+    }
+    if (s->phy) {
+        device_cold_reset(DEVICE(s->phy));
     }
     for (int i = 0; i < s->profile->region_count; i++) {
         const XT4RegionDefinition *r = &s->profile->regions[i];
@@ -596,7 +642,7 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
     QDict *scenario = qobject_to(QDict, obj);
     const char *id = scenario ? qdict_get_try_str(scenario, "scenario_id") : NULL;
     if (!id || (strcmp(id, "zero-ports-v1") && strcmp(id, "one-ports-v1")) ||
-        qdict_size(scenario) != (3 + profile->platform_model + profile->flash_model)) {
+        qdict_size(scenario) != (3 + profile->platform_model + profile->flash_model + profile->phy_model)) {
         invalid("explicit supported synthetic scenario required");
     }
     QList *words = qobject_to(QList, qdict_get(scenario, "port_inputs"));
@@ -656,6 +702,25 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
             "\"transaction_latency_ns\":64,\"virtual_part\":\"" XT4_NOR_MODEL "\"},");
     } else if (qdict_haskey(scenario, "flash")) {
         invalid("flash assumptions not allowed on older profile");
+    }
+    if (profile->phy_model) {
+        QDict *phy = qobject_to(QDict, qdict_get(scenario, "phy"));
+        if (!phy || qdict_size(phy) != 4 ||
+            !scenario_number(phy, "master_lock_latency_ns", 4) ||
+            !scenario_number(phy, "dll_lock_latency_ns", 4) ||
+            !scenario_number(phy, "initial_observable_word", 0) ||
+            g_strcmp0(qdict_get_try_str(phy, "reset_policy"), XT4_PHY_RESET_POLICY)) {
+            invalid("unsupported synthetic PHY contract");
+        }
+        s->phy_contract = (XT4PhyContract) {
+            .master_lock_latency_ns = 4, .dll_lock_latency_ns = 4,
+            .reset_policy = XT4_PHY_RESET_POLICY,
+        };
+        g_string_append(canonical,
+            "\"phy\":{\"dll_lock_latency_ns\":4,\"initial_observable_word\":0,"
+            "\"master_lock_latency_ns\":4,\"reset_policy\":\"" XT4_PHY_RESET_POLICY "\"},");
+    } else if (qdict_haskey(scenario, "phy")) {
+        invalid("PHY assumptions not allowed on older profile");
     }
     if (profile->platform_model) {
         QDict *platform = qobject_to(QDict, qdict_get(scenario, "platform"));
@@ -719,13 +784,13 @@ static const XT4ProfileDefinition *validate_profile(int dir, XT4State *s)
     QObject *models_obj = qdict_get(p, "models");
     QList *models = qobject_to(QList, models_obj);
     if ((models_obj && !models) ||
-        (profile->port_config ? !models || qlist_size(models) != (1 + profile->synthetic_inputs + profile->timer_model + 2 * profile->platform_model + 2 * profile->flash_model) :
+        (profile->port_config ? !models || qlist_size(models) != (1 + profile->synthetic_inputs + profile->timer_model + 2 * profile->platform_model + 2 * profile->flash_model + profile->phy_model) :
                                models && qlist_size(models) != 0)) {
         invalid("unsupported device model set");
     }
     if (profile->port_config) {
         const char *expected[] = {XT4_PORT_CONFIG_MODEL, XT4_STATIC_PORT_INPUT_MODEL, XT4_TIMER_MODEL,
-                                  XT4_TRANSFER_MODEL, XT4_CLOCK_APPLY_MODEL, XT4_FLASH_MODEL, XT4_NOR_MODEL};
+                                  XT4_TRANSFER_MODEL, XT4_CLOCK_APPLY_MODEL, XT4_FLASH_MODEL, XT4_NOR_MODEL, XT4_PHY_MODEL};
         const QListEntry *entry;
         int index = 0;
         QLIST_FOREACH_ENTRY(models, entry) {
@@ -861,10 +926,21 @@ static void init(MachineState *machine)
     if (s->profile->flash_model) {
         s->flash = XT4_FLASH(qdev_new(TYPE_XT4_FLASH));
         xt4_flash_set_contract(s->flash, &s->flash_contract);
+        if (s->profile->phy_model) {
+            s->phy = XT4_PHY(qdev_new(TYPE_XT4_PHY));
+            xt4_phy_set_contract(s->phy, &s->phy_contract);
+            xt4_phy_set_event_callback(s->phy, phy_event, s);
+            xt4_phy_set_completion_guard(s->phy, flash_can_complete, s);
+            xt4_flash_set_phy(s->flash, s->phy);
+        }
         xt4_flash_set_event_callback(s->flash, flash_event, s);
         xt4_flash_set_completion_guard(s->flash, flash_can_complete, s);
         sysbus_realize_and_unref(SYS_BUS_DEVICE(s->flash), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(s->flash), 0, 0xfffd8000);
+        if (s->phy) {
+            sysbus_realize_and_unref(SYS_BUS_DEVICE(s->phy), &error_fatal);
+            sysbus_mmio_map_overlap(SYS_BUS_DEVICE(s->phy), 0, 0xfffd80b4, 1);
+        }
     }
     s->cpu = XT4_CPU(object_new(TYPE_XT4_CPU));
     s->cpu->board = s;
