@@ -46,6 +46,8 @@ def write_report(run_dir: Path) -> Path:
             if record.get('event') in ('device-access', 'device-transition') and int(file.parent.name) == segment:
                 device_events.append({**record, 'evidence':str(relative)+':'+str(number)})
             if record.get('event')=='reset':
+                if record.get('profile', info['profile']['name']) != info['profile']['name']:
+                    raise ValueError('Report profile/scenario disagrees with engine reset')
                 if decoded is not None:
                     if (record.get('profile') != info['profile']['name'] or
                         record.get('scenario') != decoded.scenario_id or
@@ -54,6 +56,10 @@ def write_report(run_dir: Path) -> Path:
                         raise ValueError('Report scenario disagrees with engine reset')
                     if int(file.parent.name) == segment:
                         engine_scenario_seen = True
+                elif (record.get('scenario') is not None or
+                      record.get('scenario_sha256') is not None or
+                      record.get('execution_class') == 'synthetic_exploration'):
+                    raise ValueError('Diagnostic report contradicts synthetic engine scenario')
                 reset_states.append({'evidence':str(relative)+':'+str(number),
                                      'registers':record['registers']})
             if record.get('event')=='stop':

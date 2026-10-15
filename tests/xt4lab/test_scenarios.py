@@ -75,6 +75,34 @@ class ScenarioTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify_prepared(run)
 
+    def test_staged_json_types_cannot_change(self):
+        with tempfile.TemporaryDirectory(dir=REPO / 'runs') as tmp:
+            run = prepare_run(RESEARCH, Path(tmp) / 'types', 'bootstrap-timer-exploration',
+                              scenario_name='zero-ports-v1')
+            path = run.directory / 'profile.json'
+            original = path.read_text()
+            changes = [(('scenario', 'port_inputs', 0), False),
+                       (('scenario', 'port_inputs', 0), 0.0),
+                       (('scenario', 'timer', 'frequency_hz'), 54000000.0),
+                       (('scenario', 'timer', 'initial_halted'), 1),
+                       (('scenario', 'timer', 'enable_preserves_count'), 1),
+                       (('scenario', 'timer', 'icount_shift'), False),
+                       (('scenario', 'timer', 'stop_at_terminal_count'), 1),
+                       (('registers', 'r0'), False), (('schema_version',), True)]
+            for keys, value in changes:
+                with self.subTest(keys=keys, value=value):
+                    data = json.loads(original)
+                    target = data
+                    for key in keys[:-1]:
+                        target = target[key]
+                    target[keys[-1]] = value
+                    path.write_text(json.dumps(data))
+                    with self.assertRaisesRegex(ValueError, 'Staged profile changed'):
+                        verify_prepared(run)
+            # Ordering/whitespace changes alone are immaterial.
+            path.write_text(json.dumps(json.loads(original), sort_keys=True))
+            verify_prepared(run)
+
     def reject_engine(self, run):
         try:
             result = subprocess.run([str(REPO / 'build/qemu-system-arm'), '-machine',

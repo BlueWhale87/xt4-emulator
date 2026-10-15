@@ -151,6 +151,26 @@ class ReportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'engine.*scenario|scenario.*engine'):
                 write_report(run.directory)
 
+    def test_synthetic_report_cannot_be_downgraded_to_diagnostic(self):
+        from xt4lab.report import write_report
+        with tempfile.TemporaryDirectory(dir=REPO/'runs') as tmp:
+            run = prepare_run(RESEARCH, Path(tmp)/'downgraded', 'bootstrap-timer-exploration',
+                              scenario_name='zero-ports-v1')
+            s = RunSession(run, REPO/'build/qemu-system-arm', budget=1)
+            s.step(); s.close()
+            path = run.directory/'run-info.json'; original = path.read_text()
+            for name in ['module-entry-diagnostic', 'bootstrap-entry-diagnostic',
+                         'bootstrap-port-config-diagnostic']:
+                with self.subTest(profile=name):
+                    info = json.loads(original)
+                    info['profile']['name'] = name
+                    info['profile'].pop('scenario')
+                    info['profile'].pop('models')
+                    info['provenance'].pop('scenario_sha256')
+                    path.write_text(json.dumps(info))
+                    with self.assertRaisesRegex(ValueError, 'engine'):
+                        write_report(run.directory)
+
     def test_transition_counts_and_hash_keep_virtual_time(self):
         from xt4lab.report import write_report
         with tempfile.TemporaryDirectory(dir=REPO/'runs') as tmp:

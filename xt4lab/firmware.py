@@ -131,8 +131,12 @@ def profile_dict(profile: BootProfile) -> dict:
 
 
 def verify_prepared(run: PreparedRun) -> None:
-    expected = json.loads(json.dumps(profile_dict(run.profile)))
-    if json.loads(read_regular(run.directory, 'profile.json')) != expected:
+    expected = json.dumps(profile_dict(run.profile), sort_keys=True, allow_nan=False)
+    staged = json.dumps(json.loads(read_regular(run.directory, 'profile.json')),
+                        sort_keys=True, allow_nan=False)
+    # Python equality treats false/0, true/1 and integral floats as equivalent.
+    # The staged declaration must retain its exact JSON types as well as values.
+    if staged != expected:
         raise ValueError('Staged profile changed')
     for r in run.profile.regions:
         if r.file:
