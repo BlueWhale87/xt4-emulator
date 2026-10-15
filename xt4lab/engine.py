@@ -35,6 +35,14 @@ def configure_args() -> list[str]:
     return flags
 
 
+def source_fingerprint(repo: Path) -> dict[str, str | None]:
+    """Fingerprint tracked and untracked sources, excluding ignored outputs."""
+    paths = subprocess.check_output(['git', 'ls-files', '-z', '--cached', '--others',
+                                      '--exclude-standard'], cwd=repo).split(b'\0')
+    return {os_path.decode(): hashlib.sha256((repo / os_path.decode()).read_bytes()).hexdigest()
+            if (repo / os_path.decode()).is_file() else None for os_path in paths if os_path}
+
+
 def build_engine(repo: Path) -> Path:
     repo = repo.resolve()
     base = check_source(repo)
@@ -58,5 +66,6 @@ def build_engine(repo: Path) -> Path:
                 'python': sys.version, 'host': platform.platform(),
                 'dependencies': versions,
                 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest()}
+    manifest['source_files_sha256'] = source_fingerprint(repo)
     (build / 'xt4-build.json').write_text(json.dumps(manifest, indent=2) + '\n')
     return binary

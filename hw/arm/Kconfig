@@ -1,3 +1,11 @@
+config FUJIFILM_XT4
+    bool
+    depends on ARM && TCG
+    # Arm TCG links these CPU-interface helpers even for Cortex-A7.
+    # No controller is instantiated by the diagnostic machine.
+    select ARM_GIC
+    select ARM_GICV5
+
 config ARM_VIRT
     bool
     default y

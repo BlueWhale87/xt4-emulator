@@ -30,6 +30,17 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.engine().check_source(Path.cwd()),
                          '4fc49f46dc95d4a27de2509e7fceb2931e91faeb')
 
+    def test_source_fingerprint_includes_untracked_code(self):
+        engine = self.engine()
+        self.assertTrue(hasattr(engine, 'source_fingerprint'), 'source provenance missing')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(['git', 'init', '-q', tmp], check=True)
+            (root / 'new.c').write_bytes(b'one')
+            first = engine.source_fingerprint(root)
+            (root / 'new.c').write_bytes(b'two')
+            self.assertNotEqual(first['new.c'], engine.source_fingerprint(root)['new.c'])
+
 
 if __name__ == '__main__':
     unittest.main()

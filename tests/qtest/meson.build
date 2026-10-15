@@ -238,6 +238,7 @@ qtests_stm32l4x5 = \
    'stm32l4x5_usart-test']
 
 qtests_arm = \
+  (config_all_devices.has_key('CONFIG_FUJIFILM_XT4') ? ['xt4-test'] : []) + \
   (config_all_devices.has_key('CONFIG_MPS2') ? ['sse-timer-test'] : []) + \
   (config_all_devices.has_key('CONFIG_CMSDK_APB_DUALTIMER') ? ['cmsdk-apb-dualtimer-test'] : []) + \
   (config_all_devices.has_key('CONFIG_CMSDK_APB_TIMER') ? ['cmsdk-apb-timer-test'] : []) + \
@@ -471,6 +472,12 @@ foreach dir : target_dirs
   qtest_env.set('PYTHON', python.full_path())
 
   foreach test : target_qtests
+    if test == 'xt4-test'
+      qtest_env.set('XT4_SOURCE', meson.project_source_root())
+      qtest_env.set('XT4_PYTHON', python.full_path())
+      qtest_env.set('XT4_RUN_ROOT', meson.project_source_root() / 'runs')
+      qtest_env.set('XT4_RESEARCH_ROOT', meson.project_source_root() / '../../research/2026-10-14-xt4-firmware')
+    endif
     # Executables are shared across targets, declare them only the first time we
     # encounter them
     if not qtest_executables.has_key(test)
