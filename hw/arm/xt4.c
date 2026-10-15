@@ -12,6 +12,11 @@
 #include "qobject/qjson.h"
 #include "qobject/qnum.h"
 #include "qobject/qstring.h"
+#include "qobject/qbool.h"
+#include "exec/icount.h"
+#include "system/cpus.h"
+#include "system/qtest.h"
+#include "system/runstate.h"
 #include "system/reset.h"
 #include "system/address-spaces.h"
 #include "system/block-backend-global-state.h"
@@ -30,7 +35,7 @@ struct XT4ProfileDefinition {
     uint32_t entry, sp;
     const XT4RegionDefinition *regions;
     size_t region_count;
-    bool port_config, synthetic_inputs;
+    bool port_config, synthetic_inputs, timer_model;
 };
 
 static const XT4RegionDefinition module_regions[] = {
@@ -52,13 +57,15 @@ static const XT4RegionDefinition bootstrap_regions[] = {
 
 static const XT4ProfileDefinition profiles[] = {
     { "module-entry-diagnostic", 0x012910c4, 0x80000000,
-      module_regions, G_N_ELEMENTS(module_regions), false, false },
+      module_regions, G_N_ELEMENTS(module_regions), false, false, false },
     { "bootstrap-entry-diagnostic", 0, 0,
-      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), false, false },
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), false, false, false },
     { "bootstrap-port-config-diagnostic", 0, 0,
-      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, false },
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, false, false },
     { "bootstrap-input-exploration", 0, 0,
-      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true },
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, false },
+    { "bootstrap-timer-exploration", 0, 0,
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true },
 };
 
 static G_NORETURN void invalid(const char *message)
@@ -179,6 +186,61 @@ static void port_event(void *opaque, const XT4PortEvent *access)
     emit(s, event);
 }
 
+static void timer_event(void *opaque, const XT4TimerEvent *access)
+{
+    XT4State *s = opaque;
+    s->pending_write = !access->transition && !access->success && access->write;
+    s->pending_value = access->value;
+    s->pending_address = access->address;
+    s->pending_width = access->width;
+    s->pending_device = access->success ? NULL : XT4_TIMER_MODEL;
+    s->pending_detail = access->detail;
+    QDict *event = qdict_new();
+    qdict_put_str(event, "event", access->transition ? "device-transition" : "device-access");
+    qdict_put_str(event, "device", XT4_TIMER_MODEL);
+    qdict_put_str(event, "semantics", "synthetic pre-terminal countdown; clock/reset/enable assumptions");
+    qdict_put_str(event, "scenario", s->scenario_id);
+    qdict_put_str(event, "operation", access->transition ? "terminal-count" : access->write ? "write" : "read");
+    qdict_put_int(event, "address", access->address);
+    qdict_put_int(event, "channel", access->channel);
+    qdict_put_int(event, "virtual_ns", access->virtual_ns);
+    qdict_put_int(event, "deadline_ns", access->deadline_ns);
+    qdict_put_bool(event, "success", access->success);
+    qdict_put_bool(event, "current_known", access->current_known);
+    qdict_put_bool(event, "adjacent_known", access->adjacent_known);
+    qdict_put_bool(event, "enabled", access->enabled);
+    qdict_put_bool(event, "terminal_unknown", access->terminal_unknown);
+    qdict_put_int(event, "current", access->current);
+    qdict_put_int(event, "adjacent", access->adjacent);
+    if (access->transition) {
+        qdict_put_null(event, "width");
+        qdict_put_null(event, "value");
+    } else {
+        qdict_put_int(event, "width", access->width);
+        if (access->write || access->success) {
+            qdict_put(event, "value", qnum_from_uint(access->value));
+        } else {
+            qdict_put_null(event, "value");
+        }
+    }
+    if (access->detail) {
+        qdict_put_str(event, "detail", access->detail);
+    }
+    emit(s, event);
+    if (access->transition && !s->stopped) {
+        /* Precise icount can run virtual timers in the vCPU thread. Never
+         * synchronously disable a clock from one of its own callbacks. */
+        XT4Stop stop = {
+            .reason = "unsupported_device_transition", .access = "timer",
+            .physical_address = access->address, .has_physical = true,
+            .device = XT4_TIMER_MODEL, .detail = access->detail,
+        };
+        xt4_record_stop(s, CPU(s->cpu), &stop);
+        qemu_system_debug_request();
+        cpu_stop_current(); /* No-op outside a vCPU; never exits the CPU loop. */
+    }
+}
+
 static MemTxResult unknown_read(void *opaque, hwaddr addr, uint64_t *value,
                                 unsigned size, MemTxAttrs attrs)
 {
@@ -219,6 +281,9 @@ static void reset(void *opaque)
     cpu_reset(CPU(cpu));
     if (s->ports) {
         device_cold_reset(DEVICE(s->ports));
+    }
+    if (s->timer) {
+        device_cold_reset(DEVICE(s->timer));
     }
     for (int i = 0; i < s->profile->region_count; i++) {
         const XT4RegionDefinition *r = &s->profile->regions[i];
@@ -271,6 +336,19 @@ static void reset(void *opaque)
     emit(s, event);
 }
 
+static bool scenario_number(QDict *dict, const char *name, uint64_t expected)
+{
+    QNum *number = qobject_to(QNum, qdict_get(dict, name));
+    uint64_t value;
+    return number && qnum_get_try_uint(number, &value) && value == expected;
+}
+
+static bool scenario_true(QDict *dict, const char *name)
+{
+    QBool *value = qobject_to(QBool, qdict_get(dict, name));
+    return value && qbool_get_bool(value);
+}
+
 static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
                               XT4State *s)
 {
@@ -289,9 +367,29 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
     }
     QList *words = qobject_to(QList, qdict_get(scenario, "port_inputs"));
     QObject *timer = qdict_get(scenario, "timer");
-    if (!words || qlist_size(words) != 16 || !timer ||
-        qobject_type(timer) != QTYPE_QNULL) {
+    if (!words || qlist_size(words) != 16 || !timer) {
         invalid("invalid synthetic scenario shape");
+    }
+    const char *timer_json = "null";
+    if (profile->timer_model) {
+        QDict *clock = qobject_to(QDict, timer);
+        if (!clock || qdict_size(clock) != 5 ||
+            !scenario_number(clock, "frequency_hz", 54000000) ||
+            !scenario_number(clock, "icount_shift", 0) ||
+            !scenario_true(clock, "initial_halted") ||
+            !scenario_true(clock, "enable_preserves_count") ||
+            !scenario_true(clock, "stop_at_terminal_count")) {
+            invalid("unsupported synthetic timer assumptions");
+        }
+        timer_json = "{\"enable_preserves_count\":true,\"frequency_hz\":54000000,"
+                     "\"icount_shift\":0,\"initial_halted\":true,"
+                     "\"stop_at_terminal_count\":true}";
+        if (!qtest_enabled() &&
+            (icount_enabled() != ICOUNT_PRECISE || icount_to_ns(1) != 1)) {
+            invalid("timer exploration requires precise one-nanosecond icount");
+        }
+    } else if (qobject_type(timer) != QTYPE_QNULL) {
+        invalid("timer assumptions not allowed on input-only profile");
     }
     uint32_t expected = !strcmp(id, "zero-ports-v1") ? 0 : UINT32_MAX;
     g_autoptr(GString) canonical = g_string_new("{\"port_inputs\":[");
@@ -307,7 +405,7 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
         g_string_append_printf(canonical, "%s%" PRIu32, i ? "," : "", expected);
         i++;
     }
-    g_string_append_printf(canonical, "],\"scenario_id\":\"%s\",\"timer\":null}", id);
+    g_string_append_printf(canonical, "],\"scenario_id\":\"%s\",\"timer\":%s}", id, timer_json);
     s->scenario_id = g_strdup(id);
     s->scenario_sha256 = g_compute_checksum_for_string(G_CHECKSUM_SHA256,
                                                        canonical->str, -1);
@@ -333,12 +431,12 @@ static const XT4ProfileDefinition *validate_profile(int dir, XT4State *s)
     QObject *models_obj = qdict_get(p, "models");
     QList *models = qobject_to(QList, models_obj);
     if ((models_obj && !models) ||
-        (profile->port_config ? !models || qlist_size(models) != (profile->synthetic_inputs ? 2 : 1) :
+        (profile->port_config ? !models || qlist_size(models) != (1 + profile->synthetic_inputs + profile->timer_model) :
                                models && qlist_size(models) != 0)) {
         invalid("unsupported device model set");
     }
     if (profile->port_config) {
-        const char *expected[] = {XT4_PORT_CONFIG_MODEL, XT4_STATIC_PORT_INPUT_MODEL};
+        const char *expected[] = {XT4_PORT_CONFIG_MODEL, XT4_STATIC_PORT_INPUT_MODEL, XT4_TIMER_MODEL};
         const QListEntry *entry;
         int index = 0;
         QLIST_FOREACH_ENTRY(models, entry) {
@@ -448,6 +546,12 @@ static void init(MachineState *machine)
         sysbus_realize_and_unref(SYS_BUS_DEVICE(s->ports), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(s->ports), 0, 0xfff41000);
         sysbus_mmio_map(SYS_BUS_DEVICE(s->ports), 1, 0xfff41500);
+    }
+    if (s->profile->timer_model) {
+        s->timer = XT4_TIMER_EXPLORATION(qdev_new(TYPE_XT4_TIMER_EXPLORATION));
+        xt4_timer_set_event_callback(s->timer, timer_event, s);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(s->timer), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(s->timer), 0, 0xfff3c300);
     }
     s->cpu = XT4_CPU(object_new(TYPE_XT4_CPU));
     s->cpu->board = s;

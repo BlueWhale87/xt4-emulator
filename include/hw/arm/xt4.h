@@ -4,6 +4,7 @@
 
 #include "hw/core/boards.h"
 #include "hw/gpio/xt4-ports.h"
+#include "hw/timer/xt4-timer.h"
 #include "target/arm/cpu.h"
 #include "system/memory.h"
 
@@ -35,6 +36,7 @@ struct XT4State {
     MachineState parent_obj;
     XT4CPU *cpu;
     XT4PortsState *ports;
+    XT4TimerState *timer;
     const char *pending_device, *pending_detail;
     char *run_dir;
     char *scenario_id, *scenario_sha256;

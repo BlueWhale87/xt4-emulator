@@ -26,11 +26,12 @@ Fujifilm firmware, decoded images, per-camera data and local runs are **not incl
 | Port configuration model | 97 writes verified; next external input is unknown |
 | Full platform startup | Under investigation |
 | Explicit synthetic port inputs | Original bootstrap reaches first timer write with either declared fixture; exploration only |
+| Bounded timer exploration | Device/clock/terminal-boundary tests pass; original continuation verification pending |
 | Original menu display and virtual controls | Not implemented |
 | Virtual SD / settings storage | Not implemented |
 | SD recipe manager | Planned after menu and storage emulation |
 
-All profiles assume one Cortex-A7 core, disabled MMU/caches initially and explicitly recorded zero allocation. The original module-entry profile uses a synthetic stack; the bootstrap profiles execute original stack setup. The port configuration model tracks inferred logical settings and unknown bits. These are diagnostic boundaries rather than measured cold-boot reconstructions. Unknown hardware stops execution; the emulator does not fabricate successful device responses.
+All profiles assume one Cortex-A7 core, disabled MMU/caches initially and explicitly recorded zero allocation. The original module-entry profile uses a synthetic stack; the bootstrap profiles execute original stack setup. The port configuration model tracks inferred logical settings and unknown bits. These are diagnostic boundaries rather than measured cold-boot reconstructions. Explicit exploration profiles declare and retain synthetic input/clock assumptions. Other unknown hardware stops execution; no implicit successful device response is supplied.
 
 Emulation results apply only to modeled behavior. They do not establish physical-camera recovery or firmware safety.
 

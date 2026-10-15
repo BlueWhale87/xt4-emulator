@@ -323,21 +323,27 @@ static void assert_unsigned_value(QDict *record, uint64_t expected)
     g_assert_cmphex(actual, ==, expected);
 }
 
-static void port_fault(uint32_t address, uint32_t op, bool write,
+static void device_fault(const char *profile, const char *scenario, const char *model,
+                       uint32_t address, uint32_t op, bool write,
                        unsigned width, uint64_t value, const char *detail,
                        bool preinitialize)
 {
-    g_autofree char *run = new_fixture_profile("bootstrap-port-config-diagnostic");
-    QTestState *q = start(run, true);
+    g_autofree char *run = new_fixture_scenario(profile, scenario);
+    g_autofree char *quoted = g_shell_quote(run);
+    QTestState *q = !strcmp(profile, "bootstrap-timer-exploration") ?
+        qtest_initf("-machine fujifilm-xt4,run-dir=%s -nodefaults -nic none -S "
+                    "-accel tcg,thread=single -icount shift=0,align=off,sleep=off", quoted) :
+        start(run, true);
     if (preinitialize) {
         qtest_writel(q, address, 0xffff0000);
     }
     if (!detail) {
         qtest_readl(q, 0xfff41014); /* catch-all must clear this stale detail */
     }
+    uint32_t store = write && width != 8 ? value : 0x10001;
     uint32_t code[] = {
         mov_half(0, address, false), mov_half(0, address >> 16, true),
-        mov_half(1, 1, false), mov_half(1, 1, true),
+        mov_half(1, store, false), mov_half(1, store >> 16, true),
         mov_half(2, value, false), mov_half(2, value >> 16, true),
         mov_half(3, value >> 32, false), mov_half(3, value >> 48, true),
         mov_half(4, 0xa000, false), mov_half(4, 1, true),
@@ -369,7 +375,7 @@ static void port_fault(uint32_t address, uint32_t op, bool write,
             g_assert_cmpint(qobject_type(qdict_get(stop, "value")), ==, QTYPE_QNULL);
         }
         if (detail) {
-            g_assert_cmpstr(qdict_get_str(stop, "device"), ==, "xt4-port-config-v1");
+            g_assert_cmpstr(qdict_get_str(stop, "device"), ==, model);
             g_assert_cmpstr(qdict_get_str(stop, "detail"), ==, detail);
             if (write) {
                 QDict *event = port_record(run);
@@ -384,6 +390,14 @@ static void port_fault(uint32_t address, uint32_t op, bool write,
     g_assert_cmpuint(qtest_readl(q, 0x1a000), ==, 0);
     qobject_unref(stop);
     qtest_quit(q);
+}
+
+static void port_fault(uint32_t address, uint32_t op, bool write,
+                       unsigned width, uint64_t value, const char *detail,
+                       bool preinitialize)
+{
+    device_fault("bootstrap-port-config-diagnostic", "", "xt4-port-config-v1",
+                  address, op, write, width, value, detail, preinitialize);
 }
 
 static void port_unknown_reads(void)
@@ -481,6 +495,195 @@ static void port_synthetic_inputs(void)
     }
 }
 
+static QTestState *new_timer(char **run)
+{
+    *run = new_fixture_scenario("bootstrap-timer-exploration", "zero-ports-v1");
+    QTestState *q = start(*run, false);
+    /* The qtest accelerator executes no guest instructions. Enable virtual
+     * timer delivery; only clock_step/clock_set advance this test clock. */
+    qtest_qmp_assert_success(q, "{ 'execute': 'cont' }");
+    return q;
+}
+
+static void timer_result(const char *run, bool success, const char *detail)
+{
+    QDict *event = port_record(run);
+    g_assert_cmpstr(qdict_get_str(event, "device"), ==, "xt4-timer-exploration-v1");
+    g_assert_cmpint(qdict_get_bool(event, "success"), ==, success);
+    if (detail) {
+        g_assert_cmpstr(qdict_get_str(event, "detail"), ==, detail);
+    }
+    qobject_unref(event);
+}
+
+static void timer_register_knowledge(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_timer(&run);
+    qtest_readl(q, 0xfff3c310);
+    timer_result(run, false, "unknown_timer_readback");
+    qtest_readl(q, 0xfff3c314);
+    timer_result(run, false, "unknown_timer_readback");
+    qtest_readl(q, 0xfff3c300);
+    timer_result(run, false, "unknown_timer_control_readback");
+    qtest_writel(q, 0xfff3c300, 0x10001);
+    timer_result(run, false, "unknown_timer_count");
+    qtest_writel(q, 0xfff3c310, 0);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 0);
+    qtest_writel(q, 0xfff3c300, 0x10001);
+    timer_result(run, false, "unknown_timer_terminal_count");
+    qtest_writel(q, 0xfff3c310, UINT32_MAX);
+    qtest_writel(q, 0xfff3c314, 123);
+    g_assert_cmphex(qtest_readl(q, 0xfff3c310), ==, UINT32_MAX);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c314), ==, 123);
+    const uint32_t bad[] = {0, 0x30003, 0x1000100, 0x10002, 0x10003, 0xffff0000};
+    for (int i = 0; i < G_N_ELEMENTS(bad); i++) {
+        qtest_writel(q, 0xfff3c300, bad[i]);
+        timer_result(run, false, "unsupported_timer_control");
+    }
+    qtest_quit(q);
+}
+
+static void timer_virtual_countdown(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_timer(&run);
+    qtest_writel(q, 0xfff3c310, 2000);
+    qtest_writel(q, 0xfff3c300, 0x10001);
+    qtest_clock_step(q, 1);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 2000);
+    qtest_clock_step(q, 18);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 1999);
+    qtest_clock_step(q, 981);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 1946);
+    for (int i = 0; i < 10; i++) {
+        g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 1946);
+    }
+    g_usleep(1000);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 1946);
+    qtest_writel(q, 0xfff3c300, 0x10001); /* repeated enable cannot restart */
+    qtest_clock_step(q, 500);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 1919);
+    qtest_writel(q, 0xfff3c300, 0x10000);
+    qtest_clock_step(q, 1000);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 1919);
+    qtest_writel(q, 0xfff3c300, 0x10001);
+    qtest_clock_step(q, 1000);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 1865);
+    qtest_writel(q, 0xfff3c310, 123);
+    qtest_writel(q, 0xfff3c314, 7); /* adjacent word does not reload */
+    qtest_writel(q, 0xfff3c310, 0);
+    timer_result(run, false, "unknown_timer_terminal_count");
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 123);
+    qtest_clock_step(q, 1000);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 69);
+    qtest_quit(q);
+}
+
+static void timer_isolation_and_reset(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_timer(&run);
+    for (int ch = 0; ch < 8; ch++) {
+        qtest_writel(q, 0xfff3c310 + ch * 8, 100 + ch);
+        qtest_writel(q, 0xfff3c314 + ch * 8, 50 + ch);
+    }
+    qtest_writel(q, 0xfff3c300, 0x800080);
+    qtest_clock_step(q, 1000);
+    for (int ch = 0; ch < 8; ch++) {
+        g_assert_cmpuint(qtest_readl(q, 0xfff3c310 + ch * 8), ==, ch == 7 ? 53 : 100 + ch);
+        g_assert_cmpuint(qtest_readl(q, 0xfff3c314 + ch * 8), ==, 50 + ch);
+    }
+    qtest_system_reset(q);
+    for (int ch = 0; ch < 8; ch++) {
+        qtest_readl(q, 0xfff3c310 + ch * 8);
+        timer_result(run, false, "unknown_timer_readback");
+    }
+    qtest_clock_step(q, 1000000);
+    g_autofree char *path = g_build_filename(run, "engine-events.jsonl", NULL);
+    g_autofree char *text = NULL;
+    g_assert_true(g_file_get_contents(path, &text, NULL, NULL));
+    g_assert_null(strstr(text, "unsupported_device_transition"));
+    g_assert_cmpuint(qtest_readl(q, 0xfff41014), ==, 0);
+    qtest_quit(q);
+}
+
+static void timer_terminal_boundary(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_timer(&run);
+    qtest_writel(q, 0xfff3c310, 2);
+    qtest_writel(q, 0xfff3c300, 0x10001);
+    qtest_clock_step(q, 18);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 2);
+    qtest_clock_step(q, 1);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 1);
+    qtest_clock_step(q, 18);
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 1);
+    qtest_clock_step(q, 1);
+    QDict *stop = stop_record(run);
+    g_assert_cmpstr(qdict_get_str(stop, "reason"), ==, "unsupported_device_transition");
+    g_assert_cmpstr(qdict_get_str(stop, "detail"), ==, "unknown_timer_terminal_count");
+    g_assert_cmpint(qobject_type(qdict_get(stop, "width")), ==, QTYPE_QNULL);
+    g_assert_cmpint(qobject_type(qdict_get(stop, "value")), ==, QTYPE_QNULL);
+    qobject_unref(stop);
+    qtest_quit(q);
+}
+
+static void timer_wide_deadline(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_timer(&run);
+    qtest_writel(q, 0xfff3c310, UINT32_MAX);
+    qtest_writel(q, 0xfff3c300, 0x10001);
+    QDict *event = port_record(run);
+    g_assert_cmpint(qdict_get_int(event, "deadline_ns"), ==, INT64_C(79536431389));
+    qobject_unref(event);
+    qtest_clock_set(q, INT64_C(79536431388));
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 1);
+    qtest_clock_step(q, 1);
+    QDict *stop = stop_record(run);
+    g_assert_cmpstr(qdict_get_str(stop, "reason"), ==, "unsupported_device_transition");
+    qobject_unref(stop);
+    qtest_quit(q);
+
+    g_free(run);
+    run = NULL;
+    q = new_timer(&run);
+    qtest_clock_set(q, INT64_MAX - 1000);
+    qtest_writel(q, 0xfff3c310, UINT32_MAX);
+    qtest_writel(q, 0xfff3c300, 0x10001);
+    timer_result(run, false, "unsupported_timer_deadline");
+    g_assert_cmphex(qtest_readl(q, 0xfff3c310), ==, UINT32_MAX);
+    qtest_quit(q);
+}
+
+static void timer_invalid_operations(void)
+{
+    g_autofree char *run = NULL;
+    QTestState *q = new_timer(&run);
+    qtest_writel(q, 0xfff3c310, 2000);
+    qtest_writeb(q, 0xfff3c310, 1);
+    timer_result(run, false, "unsupported_timer_access");
+    qtest_writew(q, 0xfff3c310, 1);
+    timer_result(run, false, "unsupported_timer_access");
+    qtest_writeq(q, 0xfff3c310, UINT64_MAX);
+    timer_result(run, false, "unsupported_timer_access");
+    QDict *event = port_record(run);
+    assert_unsigned_value(event, UINT64_MAX);
+    qobject_unref(event);
+    qtest_writel(q, 0xfff3c311, 1);
+    timer_result(run, false, "unsupported_timer_access");
+    qtest_writel(q, 0xfff3c304, 1);
+    timer_result(run, false, "unsupported_timer_access");
+    g_assert_cmpuint(qtest_readl(q, 0xfff3c310), ==, 2000);
+    qtest_quit(q);
+    device_fault("bootstrap-timer-exploration", "zero-ports-v1", "xt4-timer-exploration-v1",
+                  0xfff3c310, 0xe1c020f0, true, 8, UINT64_MAX, "unsupported_timer_access", false);
+    device_fault("bootstrap-timer-exploration", "zero-ports-v1", "xt4-timer-exploration-v1",
+                  0xfff3c311, 0xe5801000, true, 4, 0x10001, "unsupported_timer_access", false);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -501,5 +704,11 @@ int main(int argc, char **argv)
     qtest_add_func("/xt4/ports/invalid", port_invalid_operations);
     qtest_add_func("/xt4/ports/unsigned-fault-values", port_unsigned_fault_values);
     qtest_add_func("/xt4/ports/synthetic-inputs-reset", port_synthetic_inputs);
+    qtest_add_func("/xt4/timer/knowledge", timer_register_knowledge);
+    qtest_add_func("/xt4/timer/time", timer_virtual_countdown);
+    qtest_add_func("/xt4/timer/reset", timer_isolation_and_reset);
+    qtest_add_func("/xt4/timer/terminal", timer_terminal_boundary);
+    qtest_add_func("/xt4/timer/wide-deadline", timer_wide_deadline);
+    qtest_add_func("/xt4/timer/invalid", timer_invalid_operations);
     return g_test_run();
 }

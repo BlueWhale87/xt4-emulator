@@ -65,3 +65,6 @@ config STELLARIS_GPTM
 
 config AVR_TIMER16
     bool
+
+config FUJIFILM_XT4_TIMER
+    bool

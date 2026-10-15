@@ -42,7 +42,7 @@ def write_report(run_dir: Path) -> Path:
         relative = file.relative_to(run_dir)
         for number,line in enumerate(read_regular(run_dir,str(relative)).decode().splitlines(),1):
             record = json.loads(line)
-            if record.get('event') == 'device-access' and int(file.parent.name) == segment:
+            if record.get('event') in ('device-access', 'device-transition') and int(file.parent.name) == segment:
                 device_events.append({**record, 'evidence':str(relative)+':'+str(number)})
             if record.get('event')=='reset':
                 reset_states.append({'evidence':str(relative)+':'+str(number),

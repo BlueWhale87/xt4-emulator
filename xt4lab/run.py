@@ -81,6 +81,8 @@ class RunSession:
             '-semihosting-config','enable=off',
             '-chardev',f'socket,id=xt4gdb,path={self.socket_path},server=on,wait=off',
             '-gdb','chardev:xt4gdb']
+        if self.prepared.profile.scenario and self.prepared.profile.scenario.timer:
+            self.argv += ['-icount', 'shift=0,align=off,sleep=off']
         self._stderr = (self.segment_dir / 'engine-stderr.log').open('xb')
         self.process = subprocess.Popen(self.argv, cwd=REPO, stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=self._stderr, umask=0o077,

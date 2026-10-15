@@ -16,7 +16,7 @@ def main():
     run.add_argument('--out',type=Path,required=True)
     run.add_argument('--profile',choices=['module-entry-diagnostic','bootstrap-entry-diagnostic',
                                        'bootstrap-port-config-diagnostic',
-                                       'bootstrap-input-exploration','validation'],
+                                       'bootstrap-input-exploration','bootstrap-timer-exploration','validation'],
                      default='module-entry-diagnostic')
     run.add_argument('--steps',type=int,default=1000)
     run.add_argument('--interactive',action='store_true')
