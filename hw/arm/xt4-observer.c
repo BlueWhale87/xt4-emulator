@@ -11,6 +11,7 @@
 typedef struct XT4CPUClass {
     ARMCPUClass parent_class;
     TCGCPUOps ops;
+    void (*parent_interrupt)(CPUState *);
 } XT4CPUClass;
 
 static void xt4_transaction_failed(CPUState *cs, hwaddr physical, vaddr virtual,
@@ -42,6 +43,11 @@ static void xt4_transaction_failed(CPUState *cs, hwaddr physical, vaddr virtual,
 
 static void xt4_interrupt(CPUState *cs)
 {
+    XT4CPUClass *xc = (XT4CPUClass *)CPU_GET_CLASS(cs);
+    if (XT4_CPU(cs)->board->gic && cs->exception_index == EXCP_IRQ) {
+        xc->parent_interrupt(cs);
+        return;
+    }
     ARMCPU *cpu = ARM_CPU(cs);
     XT4Stop stop = {
         .reason = "unexpected_exception", .access = "exception",
@@ -72,6 +78,7 @@ static void xt4_cpu_class_init(ObjectClass *oc, const void *data)
     XT4CPUClass *xc = (XT4CPUClass *)oc;
     /* Parent table is shared by every ordinary Arm CPU. Never modify it. */
     xc->ops = *cc->tcg_ops;
+    xc->parent_interrupt = xc->ops.do_interrupt;
     xc->ops.do_transaction_failed = xt4_transaction_failed;
     xc->ops.do_interrupt = xt4_interrupt;
     cc->tcg_ops = &xc->ops;

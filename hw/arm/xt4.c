@@ -37,7 +37,7 @@ struct XT4ProfileDefinition {
     const XT4RegionDefinition *regions;
     size_t region_count;
     bool port_config, synthetic_inputs, timer_model, platform_model, flash_model, phy_model;
-    bool calibration_model, selector2c;
+    bool calibration_model, selector2c, gic_model;
 };
 
 static const XT4RegionDefinition module_regions[] = {
@@ -78,6 +78,8 @@ static const XT4ProfileDefinition profiles[] = {
       bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true, true, true },
     { "bootstrap-selector2c-exploration", 0, 0,
       bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true, true, true, true },
+    { "bootstrap-gic-exploration", 0, 0,
+      bootstrap_regions, G_N_ELEMENTS(bootstrap_regions), true, true, true, true, true, true, true, true, true },
 };
 
 static G_NORETURN void invalid(const char *message)
@@ -509,6 +511,20 @@ static void phy_event(void *opaque, const XT4PhyEvent *access)
     }
 }
 
+static void gic_event(void *opaque, const XT4GicEvent *a)
+{
+    XT4State *s = opaque;
+    QDict *event = platform_event(s, XT4_GIC_MODEL,
+        "declared core0 GICv2/64IDs/5prioritybits; real QEMU controller and Arm IRQ; physical layout/SMP unknown",
+        a->address, a->width, a->value, a->write, a->success, a->detail,
+        a->transition, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+    qdict_put_bool(event, "irq_level", a->irq_level);
+    if (a->transition) {
+        qdict_put_str(event, "operation", "irq-level");
+    }
+    emit(s, event);
+}
+
 static void calibration_event(void *opaque, const XT4CalibrationTransferEvent *a)
 {
     XT4State *s = opaque;
@@ -592,6 +608,9 @@ static void reset(void *opaque)
     ARMCPU *cpu = ARM_CPU(s->cpu);
     CPUARMState *env = &cpu->env;
     cpu_reset(CPU(cpu));
+    if (s->gic) {
+        device_cold_reset(DEVICE(s->gic));
+    }
     if (s->calibration) {
         device_cold_reset(DEVICE(s->calibration));
     }
@@ -705,7 +724,7 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
     QDict *scenario = qobject_to(QDict, obj);
     const char *id = scenario ? qdict_get_try_str(scenario, "scenario_id") : NULL;
     if (!id || (strcmp(id, "zero-ports-v1") && strcmp(id, "one-ports-v1")) ||
-        qdict_size(scenario) != (3 + profile->platform_model + profile->flash_model + profile->phy_model + profile->calibration_model)) {
+        qdict_size(scenario) != (3 + profile->platform_model + profile->flash_model + profile->phy_model + profile->calibration_model + profile->gic_model)) {
         invalid("explicit supported synthetic scenario required");
     }
     QList *words = qobject_to(QList, qdict_get(scenario, "port_inputs"));
@@ -769,6 +788,27 @@ static void validate_scenario(QDict *p, const XT4ProfileDefinition *profile,
             "\"transaction_latency_ns\":64,\"virtual_part\":\"%s\"},", settle, policy, part);
     } else if (qdict_haskey(scenario, "flash")) {
         invalid("flash assumptions not allowed on older profile");
+    }
+    if (profile->gic_model) {
+        QDict *gic = qobject_to(QDict, qdict_get(scenario, "gic"));
+        QBool *security = gic ? qobject_to(QBool, qdict_get(gic, "security_extensions")) : NULL;
+        QBool *virt = gic ? qobject_to(QBool, qdict_get(gic, "virtualization_extensions")) : NULL;
+        if (!gic || qdict_size(gic) != 8 || !security || qbool_get_bool(security) ||
+            !virt || qbool_get_bool(virt) ||
+            !scenario_number(gic, "revision", 2) ||
+            !scenario_number(gic, "cpu_count", 1) ||
+            !scenario_number(gic, "irq_count", 64) ||
+            !scenario_number(gic, "priority_bits", 5) ||
+            !scenario_number(gic, "base", 0xf8f00000) ||
+            g_strcmp0(qdict_get_try_str(gic, "reset_policy"), "qemu-disabled-v1")) {
+            invalid("unsupported virtual GIC contract");
+        }
+        g_string_append(canonical,
+            "\"gic\":{\"base\":4176478208,\"cpu_count\":1,\"irq_count\":64,"
+            "\"priority_bits\":5,\"reset_policy\":\"qemu-disabled-v1\",\"revision\":2,"
+            "\"security_extensions\":false,\"virtualization_extensions\":false},");
+    } else if (qdict_haskey(scenario, "gic")) {
+        invalid("GIC assumptions not allowed on older profile");
     }
     if (profile->phy_model) {
         QDict *phy = qobject_to(QDict, qdict_get(scenario, "phy"));
@@ -883,7 +923,7 @@ static const XT4ProfileDefinition *validate_profile(int dir, XT4State *s)
     QObject *models_obj = qdict_get(p, "models");
     QList *models = qobject_to(QList, models_obj);
     if ((models_obj && !models) ||
-        (profile->port_config ? !models || qlist_size(models) != (1 + profile->synthetic_inputs + profile->timer_model + 2 * profile->platform_model + 2 * profile->flash_model + profile->phy_model + 4 * profile->calibration_model) :
+        (profile->port_config ? !models || qlist_size(models) != (1 + profile->synthetic_inputs + profile->timer_model + 2 * profile->platform_model + 2 * profile->flash_model + profile->phy_model + 4 * profile->calibration_model + profile->gic_model) :
                                models && qlist_size(models) != 0)) {
         invalid("unsupported device model set");
     }
@@ -891,7 +931,7 @@ static const XT4ProfileDefinition *validate_profile(int dir, XT4State *s)
         const char *expected[] = {XT4_PORT_CONFIG_MODEL, XT4_STATIC_PORT_INPUT_MODEL, XT4_TIMER_MODEL,
                                   XT4_TRANSFER_MODEL, XT4_CLOCK_APPLY_MODEL, XT4_FLASH_MODEL,
                                   profile->selector2c ? XT4_NOR_MODEL_2C : XT4_NOR_MODEL, XT4_PHY_MODEL,
-                                  XT4_ROUTE_MODEL, XT4_DMA_MODEL, XT4_INDIRECT_MODEL, XT4_MEDIA_MODEL};
+                                  XT4_ROUTE_MODEL, XT4_DMA_MODEL, XT4_INDIRECT_MODEL, XT4_MEDIA_MODEL, XT4_GIC_MODEL};
         const QListEntry *entry;
         int index = 0;
         QLIST_FOREACH_ENTRY(models, entry) {
@@ -1095,6 +1135,14 @@ static void init(MachineState *machine)
                                  s->calibration_contract.cbar_base, &error_fatal);
     }
     qdev_realize(DEVICE(s->cpu), NULL, &error_fatal);
+    if (s->profile->gic_model) {
+        s->gic = XT4_GIC(qdev_new(TYPE_XT4_GIC));
+        xt4_gic_set_event_callback(s->gic, gic_event, s);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(s->gic), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(s->gic), 0, 0xf8f01000);
+        sysbus_connect_irq(SYS_BUS_DEVICE(s->gic), 0,
+                           qdev_get_gpio_in(DEVICE(s->cpu), ARM_CPU_IRQ));
+    }
     if (s->instruction_budget) {
         s->budget_timer = timer_new_full(NULL, QEMU_CLOCK_VIRTUAL, SCALE_NS,
             QEMU_TIMER_ATTR_EXTERNAL, execution_budget, s);

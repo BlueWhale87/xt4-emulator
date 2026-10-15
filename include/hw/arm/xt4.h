@@ -9,6 +9,7 @@
 #include "hw/dma/xt4-calibration-transfer.h"
 #include "hw/misc/xt4-clock-apply.h"
 #include "hw/ssi/xt4-flash.h"
+#include "hw/intc/xt4-gic.h"
 #include "target/arm/cpu.h"
 #include "system/memory.h"
 #include "system/runstate.h"
@@ -48,6 +49,7 @@ struct XT4State {
     XT4FlashState *flash;
     XT4PhyState *phy;
     XT4CalibrationTransferState *calibration;
+    XT4GicState *gic;
     XT4CalibrationTransferContract calibration_contract;
     XT4CoveredNor media;
     uint8_t *media_bytes;

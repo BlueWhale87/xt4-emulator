@@ -81,7 +81,8 @@ def load_profile(name: str, *, scenario_name: str | None = None) -> BootProfile:
                 'bootstrap-flash-exploration': 'xt4-212-flash.json',
                 'bootstrap-phy-exploration': 'xt4-212-phy.json',
                 'bootstrap-calibration-exploration': 'xt4-212-calibration.json',
-                'bootstrap-selector2c-exploration': 'xt4-212-selector2c.json'}
+                'bootstrap-selector2c-exploration': 'xt4-212-selector2c.json',
+                'bootstrap-gic-exploration': 'xt4-212-gic.json'}
     if name not in profiles:
         raise ValueError('Unsupported profile')
     data = json.loads(Path(__file__).with_name('profiles').joinpath(profiles[name]).read_text())
@@ -91,15 +92,16 @@ def load_profile(name: str, *, scenario_name: str | None = None) -> BootProfile:
     data['regions'] = tuple(Region(**r) for r in data['regions'])
     data['assumptions'] = tuple(data['assumptions'])
     data['models'] = tuple(data.get('models', ()))
-    if name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'):
+    if name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'):
         if scenario_name is None:
             raise ValueError('Exploration requires an explicit synthetic scenario')
         data['scenario'] = load_scenario(scenario_name, timer=name != 'bootstrap-input-exploration',
-                                         platform=name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-                                         flash=name in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-                                         phy=name in ('bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-            transfer=name in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-            selector2c=name == 'bootstrap-selector2c-exploration')
+                                         platform=name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+                                         flash=name in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+                                         phy=name in ('bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+            transfer=name in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+            selector2c=name in ('bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+            gic=name == 'bootstrap-gic-exploration')
     elif scenario_name is not None:
         raise ValueError('Synthetic scenario is not allowed on this profile')
     profile = BootProfile(**data)
@@ -130,16 +132,18 @@ def validate_profile(profile: BootProfile) -> None:
     expected_models['bootstrap-selector2c-exploration'] = tuple(
         'selector2c-spi-boot-v1' if m == 'mx25um51245gxdi00-boot-v1' else m
         for m in expected_models['bootstrap-calibration-exploration'])
-    validate_media(profile.media, required=profile.name in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'))
+    expected_models['bootstrap-gic-exploration'] = expected_models['bootstrap-selector2c-exploration'] + ('xt4-gicv2-core0-exploration-v1',)
+    validate_media(profile.media, required=profile.name in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'))
     if profile.name not in expected_models or profile.models != expected_models[profile.name]:
         raise ValueError('Unsupported profile model set')
-    if profile.name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'):
+    if profile.name in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'):
         validate_scenario(profile.scenario, timer=profile.name != 'bootstrap-input-exploration',
-                          platform=profile.name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-                          flash=profile.name in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-                          phy=profile.name in ('bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-            transfer=profile.name in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-            selector2c=profile.name == 'bootstrap-selector2c-exploration')
+                          platform=profile.name in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+                          flash=profile.name in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+                          phy=profile.name in ('bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+            transfer=profile.name in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+            selector2c=profile.name in ('bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+            gic=profile.name == 'bootstrap-gic-exploration')
     elif profile.scenario is not None:
         raise ValueError('Scenario is not allowed on a diagnostic profile')
     extents = []

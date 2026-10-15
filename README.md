@@ -2,7 +2,7 @@
 
 An experimental Fujifilm X-T4 machine for QEMU, with a bounded execution runner and reproducible dependency reports. The long-term goal is to run the original camera menus and virtual SD storage before developing an SD recipe manager.
 
-**Current result: original bootstrap execution completes 64 calibration transfers and computes its own calibration result, then reaches an unsupported interrupt-controller read after 96,742 raw engine-counted instructions. This uses explicit synthetic input, timing, flash, PHY and ideal sampling assumptions. Camera menus do not boot yet.** The alternate selector0x2c SPI profile reaches the same boundary after95,402 instructions with its own strict command/state contract; sampling remains ideal. Display, controls, storage, interrupts and full platform startup remain work in progress.
+**Current result: the unchanged bootstrap completes flash calibration and interrupt-controller setup, then stops at the next unsupported1024-byte startup-context transfer after96,412 raw engine-counted instructions.** The latest profile uses an explicit one-core GICv2 model and declared synthetic input, flash, timing and ideal sampling policies. Camera menus do not boot yet; display, controls, storage and full multicore startup remain unfinished.
 
 The project runs entirely on the host. Its runner exposes no camera connection, USB passthrough, host networking or physical storage devices. It does not modify or install camera firmware.
 
@@ -11,7 +11,8 @@ The project runs entirely on the host. Its runner exposes no camera connection, 
 - [Build, firmware preparation and testing](docs/xt4/public-setup.md)
 - [Diagnostic runner, evidence and limitations](docs/xt4/foundation.md)
 - [Startup investigation](docs/xt4/startup.md)
-- [Latest calibration transfer and how to run it](docs/xt4/calibration-startup.md)
+- [Latest core-0 interrupt startup and next loader boundary](docs/xt4/interrupt-startup.md)
+- [Calibration transfer and how to run it](docs/xt4/calibration-startup.md)
 - [Earlier PHY initialization](docs/xt4/phy-startup.md)
 - [Earlier flash initialization](docs/xt4/flash-startup.md)
 - [Earlier controller exploration](docs/xt4/controller-startup.md)
@@ -37,6 +38,7 @@ Fujifilm firmware, decoded images, per-camera data and local runs are **not incl
 | Causal flash command exploration | 195 writes / 125 reads / 7 transitions; next unsupported PHY-enable configuration; no array/DMA/PHY training |
 | Causal PHY lock exploration | 204 writes / 128 reads / 9 transitions; next unsupported DMA request-routing write; calibration/transfer incomplete |
 | Covered calibration transfer exploration | 2,380 writes / 2,304 reads; 64 full transfers and original-computed calibration result; next unsupported GIC read at `0xf8f01000` |
+| Core-0 GIC/IRQ exploration | Original GIC setup reaches the next loader request; diagnostic guest verifies actual IRQ vector/acknowledgement/EOI/return |
 | Original menu display and virtual controls | Not implemented |
 | Virtual SD / settings storage | Not implemented |
 | SD recipe manager | Planned after menu and storage emulation |

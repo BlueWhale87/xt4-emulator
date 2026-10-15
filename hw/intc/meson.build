@@ -1,4 +1,5 @@
 system_ss.add(files('intc.c'))
+system_ss.add(when: 'CONFIG_FUJIFILM_XT4', if_true: files('xt4-gic.c'))
 system_ss.add(when: 'CONFIG_ARM_GIC', if_true: files(
   'arm_gic.c',
   'arm_gic_common.c',

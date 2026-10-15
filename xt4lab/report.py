@@ -24,14 +24,15 @@ def write_report(run_dir: Path) -> Path:
     if fast and (type(info['budget']) is not int or not 1 <= info['budget'] <= 1000000000):
         raise ValueError('Invalid report execution budget')
     scenario = info['profile'].get('scenario')
-    if info['profile']['name'] in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'):
+    if info['profile']['name'] in ('bootstrap-input-exploration', 'bootstrap-timer-exploration', 'bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'):
         decoded = scenario_from_dict(scenario,
             timer=info['profile']['name'] != 'bootstrap-input-exploration',
-            platform=info['profile']['name'] in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-            flash=info['profile']['name'] in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-            phy=info['profile']['name'] in ('bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-            transfer=info['profile']['name'] in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'),
-            selector2c=info['profile']['name'] == 'bootstrap-selector2c-exploration')
+            platform=info['profile']['name'] in ('bootstrap-controller-exploration', 'bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+            flash=info['profile']['name'] in ('bootstrap-flash-exploration', 'bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+            phy=info['profile']['name'] in ('bootstrap-phy-exploration', 'bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+            transfer=info['profile']['name'] in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+            selector2c=info['profile']['name'] in ('bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'),
+            gic=info['profile']['name'] == 'bootstrap-gic-exploration')
     else:
         if scenario is not None:
             raise ValueError('Synthetic scenario on a diagnostic report')
@@ -39,11 +40,11 @@ def write_report(run_dir: Path) -> Path:
     if info['provenance'].get('scenario_sha256') != scenario_sha256(decoded):
         raise ValueError('Report scenario fingerprint mismatch')
     media = info['profile'].get('media')
-    if info['profile']['name'] not in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration') and 'media' in info['profile']:
+    if info['profile']['name'] not in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration') and 'media' in info['profile']:
         raise ValueError('Unsupported report media')
     try:
         validate_media(FlashMedia(**media) if isinstance(media, dict) else media,
-                       required=info['profile']['name'] in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration'))
+                       required=info['profile']['name'] in ('bootstrap-calibration-exploration', 'bootstrap-selector2c-exploration', 'bootstrap-gic-exploration'))
     except TypeError as exc:
         raise ValueError('Unsupported report media') from exc
     engine = json.loads(read_regular(run_dir,'engine-build.json'))
@@ -243,7 +244,14 @@ def write_report(run_dir: Path) -> Path:
                 f'and ideal taps0..127 in controller phases{phases}.** Parent-profile no-DMA statements '
                 'above describe the earlier increments. Original code performs its own comparisons '
                 'and computes calibration results. Virtual CBAR F8F00000 is explicitly selected; '
-                'no GIC or full boot is supplied. Physical sampling and DMA semantics remain unmeasured.']
+                'Physical sampling and DMA semantics remain unmeasured.']
+        if decoded.gic is not None:
+            lines += ['GIC assumptions: **`xt4-gicv2-core0-exploration-v1`, one core, GICv2, '
+                '64 IDs, five priority bits, security/virtualization disabled and standard disabled reset.** '
+                'Real QEMU interrupt state and architectural Arm IRQ entry are modeled; physical '
+                'inventory, peer-core release and full boot remain unresolved.']
+        elif decoded.transfer is not None:
+            lines += ['No GIC or full boot is supplied by this profile.']
     lines += ['', '## Assumptions', '', *('- '+a for a in summary['assumptions']), '',
         '## Reproducibility', '', f"- Original DAT SHA256: `{summary['original_sha256']}`",
         f"- Engine SHA256: `{summary['engine_sha256']}`",
