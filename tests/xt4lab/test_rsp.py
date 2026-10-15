@@ -102,6 +102,127 @@ class RspTests(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             client.command('hello')
 
+    @staticmethod
+    def read_request(c):
+        data = b''
+        while b'#' not in data:
+            chunk = c.recv(1)
+            if not chunk:
+                raise ConnectionError('test peer closed before request')
+            data += chunk
+        return data + c.recv(2)
+
+    def test_continue_waits_beyond_packet_timeout(self):
+        def serve(c):
+            self.assertEqual(self.read_request(c), packet(b'c'))
+            c.sendall(b'+')
+            time.sleep(.12)
+            c.sendall(packet(b'T05thread:1;'))
+            self.assertEqual(c.recv(1), b'+')
+        client = self.client(serve)
+        client.timeout = .04
+        client.deadline = time.monotonic() + .5
+        self.assertTrue(hasattr(client, 'continue_run'), 'bounded continue missing')
+        self.assertEqual(client.continue_run().signal, 5)
+        self.assertFalse(client.execution_timed_out)
+
+    def test_continue_interrupts_once_and_drains_before_next_request(self):
+        def serve(c):
+            self.read_request(c); c.sendall(b'+')
+            self.assertEqual(c.recv(1), b'\x03')
+            c.sendall(packet(b'S02'))
+            self.assertEqual(c.recv(1), b'+')
+            self.assertEqual(self.read_request(c), packet(b'hello'))
+            c.sendall(b'+' + packet(b'OK'))
+            self.assertEqual(c.recv(1), b'+')
+        client = self.client(serve)
+        client.deadline = time.monotonic() + .5
+        start = time.monotonic()
+        client.interrupt_requested = lambda: time.monotonic() - start >= .03
+        self.assertTrue(hasattr(client, 'continue_run'), 'bounded continue missing')
+        self.assertEqual(client.continue_run().signal, 2)
+        self.assertEqual(client.command('hello'), 'OK')
+
+    def test_pause_during_continue_frame_does_not_send_extra_interrupt(self):
+        pause = threading.Event()
+        def serve(c):
+            self.read_request(c); c.sendall(b'+$T05')
+            time.sleep(.04)
+            tail = packet(b'T05thread:1;')[4:]
+            c.sendall(tail)
+            self.assertEqual(c.recv(1), b'+')
+            self.assertEqual(self.read_request(c), packet(b'hello'))
+            c.sendall(b'+' + packet(b'OK'))
+            self.assertEqual(c.recv(1), b'+')
+        client = self.client(serve)
+        original = client.sock
+        class PauseInFrame:
+            def __getattr__(self, name):
+                return getattr(original, name)
+            def recv(self, n):
+                data = original.recv(n)
+                if data == b'T': pause.set()
+                return data
+        client.sock = PauseInFrame()
+        client.interrupt_requested = pause.is_set
+        client.deadline = time.monotonic() + .5
+        self.assertTrue(hasattr(client, 'continue_run'), 'bounded continue missing')
+        self.assertEqual(client.continue_run().signal, 5)
+        self.assertEqual(client.command('hello'), 'OK')
+
+    def test_continue_deadline_drains_with_bounded_grace(self):
+        def serve(c):
+            self.read_request(c); c.sendall(b'+')
+            self.assertEqual(c.recv(1), b'\x03')
+            time.sleep(.02)
+            c.sendall(packet(b'S02'))
+            self.assertEqual(c.recv(1), b'+')
+        client = self.client(serve)
+        client.timeout = .1
+        client.deadline = time.monotonic() + .03
+        self.assertTrue(hasattr(client, 'continue_run'), 'bounded continue missing')
+        self.assertEqual(client.continue_run().signal, 2)
+        self.assertTrue(client.execution_timed_out)
+
+    def test_continue_partial_frame_expiry_and_disconnect_are_failures(self):
+        for response in [b'+$S05', b'+?', b'+$Sgg#21', b'']:
+            with self.subTest(response=response):
+                def serve(c):
+                    self.read_request(c)
+                    if response:
+                        c.sendall(response)
+                        time.sleep(.12)
+                client = self.client(serve)
+                client.timeout = .04
+                client.deadline = time.monotonic() + .2
+                self.assertTrue(hasattr(client, 'continue_run'), 'bounded continue missing')
+                with self.assertRaises((TimeoutError, ValueError, ConnectionError)):
+                    client.continue_run()
+
+    def test_continue_unresponsive_interrupt_has_finite_cleanup(self):
+        def serve(c):
+            self.read_request(c); c.sendall(b'+')
+            self.assertEqual(c.recv(1), b'\x03')
+            time.sleep(.15)
+        client = self.client(serve)
+        client.timeout = .04
+        client.deadline = time.monotonic() + .02
+        self.assertTrue(hasattr(client, 'continue_run'), 'bounded continue missing')
+        start = time.monotonic()
+        with self.assertRaises(TimeoutError):
+            client.continue_run()
+        self.assertLess(time.monotonic() - start, .13)
+
+    def test_ordinary_command_keeps_packet_bound(self):
+        def serve(c):
+            self.read_request(c); c.sendall(b'+')
+            time.sleep(.12)
+        client = self.client(serve)
+        client.timeout = .04
+        client.deadline = time.monotonic() + .5
+        with self.assertRaises(TimeoutError):
+            client.command('hello')
+
 
 if __name__ == '__main__':
     unittest.main()

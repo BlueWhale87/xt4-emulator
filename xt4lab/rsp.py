@@ -26,6 +26,9 @@ class RspClient:
         self.interrupt_requested = lambda: False
         self._interrupt_sent = False
         self._response_deadline = None
+        self._execution = False
+        self.execution_timed_out = False
+        self._cleanup_deadline = None
         self._registers = None
 
     def close(self) -> None:
@@ -33,27 +36,35 @@ class RspClient:
             self.sock.close()
             self.sock = None
 
-    def _read(self, count: int) -> bytes:
+    def _read(self, count: int, *, stop_prefix=False) -> bytes:
         data = b''
         read_deadline = time.monotonic() + self.timeout
         while len(data) < count:
             if self.sock is None:
                 raise ConnectionError('Debugger connection closed')
-            limits = [read_deadline]
-            if self.deadline is not None:
+            now = time.monotonic()
+            if self._execution and self.deadline is not None and now >= self.deadline:
+                if not self.execution_timed_out:
+                    self.execution_timed_out = True
+                    self._cleanup_deadline = now + self.timeout
+            limits = [] if self._execution and stop_prefix else [read_deadline]
+            if self._cleanup_deadline is not None:
+                limits.append(self._cleanup_deadline)
+            elif self.deadline is not None:
                 limits.append(self.deadline)
             if self._response_deadline is not None:
                 limits.append(self._response_deadline)
-            remaining = min(limits) - time.monotonic()
+            remaining = min(limits) - now
             if remaining <= 0:
                 raise TimeoutError('Execution deadline exhausted')
             self.sock.settimeout(min(self.timeout, remaining))
+            if (self.pending_command in ('s', 'c') and stop_prefix
+                    and (self.interrupt_requested() or self.execution_timed_out)
+                    and not self._interrupt_sent):
+                # Never inject an interrupt into a partially received stop frame.
+                self.sock.sendall(b'\x03')
+                self._interrupt_sent = True
             if not select.select([self.sock], [], [], min(remaining, .02))[0]:
-                if (self.pending_command == 's' and self.interrupt_requested()
-                        and not self._interrupt_sent):
-                    # Raw RSP interrupt is out-of-band, not another command.
-                    self.sock.sendall(b'\x03')
-                    self._interrupt_sent = True
                 continue
             chunk = self.sock.recv(count - len(data))
             if not chunk:
@@ -61,17 +72,24 @@ class RspClient:
             data += chunk
         return data
 
-    def command(self, command: str) -> str:
+    def command(self, command: str, *, _execution=False) -> str:
         if self.pending_command is not None:
             raise ValueError('A debugger request is still outstanding')
+        if _execution and self.deadline is None:
+            raise ValueError('Continue requires an absolute execution deadline')
         self.pending_command = command
         self._interrupt_sent = False
+        self._execution = _execution
+        self.execution_timed_out = False
+        self._cleanup_deadline = None
         self._response_deadline = time.monotonic() + self.timeout
         try:
             return self._command(command)
         finally:
             self.pending_command = None
             self._response_deadline = None
+            self._execution = False
+            self._cleanup_deadline = None
 
     def _command(self, command: str) -> str:
         if self.sock is None:
@@ -88,8 +106,12 @@ class RspClient:
         else:
             raise ValueError('Debugger rejected packet repeatedly')
         for _ in range(32):
-            if self._read(1) != b'$':
+            if self._execution:
+                self._response_deadline = None
+            if self._read(1, stop_prefix=True) != b'$':
                 raise ValueError('Invalid debugger packet prefix')
+            if self._execution:
+                self._response_deadline = time.monotonic() + self.timeout
             encoded = bytearray()
             while True:
                 byte = self._read(1)
@@ -192,7 +214,13 @@ class RspClient:
         return data
 
     def step(self) -> StopReply:
-        reply = self.command('s')
+        return self._stop_reply(self.command('s'))
+
+    def continue_run(self) -> StopReply:
+        return self._stop_reply(self.command('c', _execution=True))
+
+    @staticmethod
+    def _stop_reply(reply: str) -> StopReply:
         if reply[:1] in ('W', 'X'):
             return StopReply(None, None, True, int(reply[1:3], 16))
         if reply[:1] not in ('S', 'T'):

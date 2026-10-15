@@ -20,17 +20,21 @@ def main():
                      default='module-entry-diagnostic')
     run.add_argument('--steps',type=int,default=1000)
     run.add_argument('--interactive',action='store_true')
+    run.add_argument('--fast',action='store_true')
     run.add_argument('--scenario', choices=['zero-ports-v1', 'one-ports-v1'])
     args = parser.parse_args()
     if args.command == 'report':
         print(write_report(args.run_dir))
         return
+    if args.fast and args.interactive:
+        parser.error('--fast does not support --interactive')
     prepared = prepare_run(args.research_root.resolve(),args.out,args.profile,
                            scenario_name=args.scenario)
-    session = RunSession(prepared, REPO/'build/qemu-system-arm',budget=args.steps)
+    session = RunSession(prepared, REPO/'build/qemu-system-arm',budget=args.steps,
+                         execution_mode='bounded-continue' if args.fast else 'single-step')
     try:
         if not args.interactive:
-            print(session.continue_steps(args.steps))
+            print(session.continue_fast() if args.fast else session.continue_steps(args.steps))
         else:
             print('Virtual firmware only. Commands: step, continue N, pause, reset, quit; Ctrl-C pauses.')
             while True:

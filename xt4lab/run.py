@@ -32,10 +32,15 @@ def verified_engine(qemu: Path) -> dict:
 
 class RunSession:
     def __init__(self, prepared: PreparedRun, qemu: Path, *, budget=1000,
-                 timeout=2.0, wall_limit=30.0):
+                 timeout=2.0, wall_limit=30.0, execution_mode='single-step'):
         self.engine = verified_engine(qemu)
-        if not 1 <= budget <= 1000000 or not 0 < timeout <= 2 or not 0 <= wall_limit <= 30:
+        if execution_mode not in ('single-step', 'bounded-continue'):
+            raise ValueError('Invalid execution mode')
+        maximum = 1000000000 if execution_mode == 'bounded-continue' else 1000000
+        if (type(budget) is not int or not 1 <= budget <= maximum
+                or not 0 < timeout <= 2 or not 0 <= wall_limit <= 30):
             raise ValueError('Invalid execution limits')
+        self.execution_mode = execution_mode
         self.prepared, self.qemu = prepared, qemu.resolve()
         verify_prepared(prepared)
         self.budget, self.timeout, self.wall_limit = budget, timeout, wall_limit
@@ -49,7 +54,9 @@ class RunSession:
             'schema_version': 1, 'camera_booted': False,
             'profile': profile_dict(prepared.profile), 'provenance': prepared.manifest,
             'budget': budget, 'response_timeout': timeout, 'wall_limit': wall_limit,
-            'single_step_flags': 1})
+            'single_step_flags': 1, 'execution_mode': execution_mode,
+            'trace_policy': 'boundary-and-device-events' if self.fast else 'instruction',
+            'count_semantics': 'qemu-raw-icount-not-retired' if self.fast else 'acknowledged-single-step'})
         try:
             self._start()
         except BaseException:
@@ -59,6 +66,10 @@ class RunSession:
     def _record(self, record):
         self.trace.write(json.dumps({'segment': self.segment, **record}, sort_keys=True) + '\n')
         self.trace.flush()
+
+    @property
+    def fast(self):
+        return self.execution_mode == 'bounded-continue'
 
     def _start(self):
         verify_prepared(self.prepared)
@@ -81,7 +92,9 @@ class RunSession:
             '-semihosting-config','enable=off',
             '-chardev',f'socket,id=xt4gdb,path={self.socket_path},server=on,wait=off',
             '-gdb','chardev:xt4gdb']
-        if self.prepared.profile.scenario and self.prepared.profile.scenario.timer:
+        if self.fast:
+            self.argv[2] += ',instruction-budget=' + str(self.budget)
+        if self.fast or (self.prepared.profile.scenario and self.prepared.profile.scenario.timer):
             self.argv += ['-icount', 'shift=0,align=off,sleep=off']
         self._stderr = (self.segment_dir / 'engine-stderr.log').open('xb')
         self.process = subprocess.Popen(self.argv, cwd=REPO, stdin=subprocess.DEVNULL,
@@ -102,6 +115,8 @@ class RunSession:
         self.started = time.monotonic()
         self.client.deadline = self.started + self.wall_limit
         self.completed_steps = self.attempted_steps = 0
+        self.engine_instruction_count = 0 if self.fast else None
+        self._snapshot_sequence = 0
         self.stop = None
         self.paused = False
         self.client.interrupt_requested = lambda: self.paused
@@ -110,7 +125,8 @@ class RunSession:
 
     def _finish(self, reason, **fields):
         self.stop = {'reason':reason,'completed_steps':self.completed_steps,
-                     'attempted_steps':self.attempted_steps, 'segment':self.segment, **fields}
+                     'attempted_steps':self.attempted_steps, 'segment':self.segment,
+                     **self._accounting(), **fields}
         self._record({'event':'stop', **self.stop})
         write_json(self.prepared.directory / 'stop.json', self.stop)
         return self.stop
@@ -126,10 +142,15 @@ class RunSession:
         return None
 
     def step(self) -> dict:
+        if self.fast:
+            raise ValueError('step requires single-step mode')
         self.paused = False
         return self._perform_step()
 
     def _perform_step(self) -> dict:
+        return self._with_pause_handler(self._step_impl)
+
+    def _with_pause_handler(self, operation) -> dict:
         # Keep the packet parser on its stack when SIGINT arrives. The handler
         # only requests a pause; RSP polling interrupts execution and drains its
         # stop reply. This also protects partially received ordinary packets.
@@ -138,15 +159,83 @@ class RunSession:
         if main_thread:
             previous = signal.signal(signal.SIGINT, lambda *_: setattr(self, 'paused', True))
         try:
-            return self._step_impl()
+            return operation()
         finally:
             if main_thread:
                 signal.signal(signal.SIGINT, previous)
 
     def _paused_result(self):
-        self._record({'event':'pause','completed_steps':self.completed_steps})
+        self._record({'event':'pause','completed_steps':self.completed_steps, **self._accounting()})
         return {'reason':'paused','completed_steps':self.completed_steps,
-                'attempted_steps':self.attempted_steps}
+                'attempted_steps':self.attempted_steps, **self._accounting()}
+
+    def _accounting(self):
+        return {'engine_instruction_count': self.engine_instruction_count} if self.fast else {}
+
+    def _execution_snapshot(self):
+        path = self.segment_dir / 'engine-events.jsonl'
+        records = [json.loads(line) for line in path.read_text().splitlines()]
+        states = [e for e in records if e.get('event') == 'execution-state']
+        return states[-1] if states else None
+
+    def continue_fast(self) -> dict:
+        if not self.fast:
+            raise ValueError('continue_fast requires bounded-continue mode')
+        self.paused = False
+        return self._with_pause_handler(self._fast_impl)
+
+    def _fast_failure(self, reason, **fields):
+        self._close_engine()
+        return self._finish(reason, **fields)
+
+    def _fast_impl(self) -> dict:
+        if self.closed:
+            raise ValueError('Session closed')
+        if self.stop:
+            return self.stop
+        # No earlier pause snapshot may stand in for a new failed execution.
+        self.engine_instruction_count = None
+        self._record({'event': 'continue', 'engine_instruction_count': None})
+        if self.process.poll() is not None:
+            return self._fast_failure('engine_crash', exit_code=self.process.returncode)
+        if time.monotonic() >= self.client.deadline:
+            return self._fast_failure('timeout')
+        try:
+            reply = self.client.continue_run()
+            if reply.exited:
+                return self._fast_failure('engine_crash', exit_code=reply.exit_code)
+            snapshot = self._execution_snapshot()
+            if (snapshot is None or type(snapshot.get('sequence')) is not int
+                    or snapshot['sequence'] <= self._snapshot_sequence
+                    or snapshot.get('running') is not False
+                    or type(snapshot.get('engine_instruction_count')) is not int
+                    or not 0 <= snapshot['engine_instruction_count'] <= self.budget
+                    or snapshot.get('instruction_budget') != self.budget
+                    or snapshot.get('count_semantics') != 'qemu-raw-icount-not-retired'):
+                raise ValueError('Missing fresh stopped engine accounting')
+            self._snapshot_sequence = snapshot['sequence']
+            self.engine_instruction_count = snapshot['engine_instruction_count']
+            self._record({**snapshot, 'event': 'engine-count'})
+            if self.client.execution_timed_out:
+                return self._fast_failure('timeout')
+            fault = self._engine_stop()
+            if fault:
+                fault.pop('event', None)
+                return self._finish(**fault)
+            if reply.signal == 2 and self.paused:
+                return self._paused_result()
+            if reply.signal != 5:
+                return self._fast_failure('unexpected_exception', signal=reply.signal)
+            if self.paused:
+                return self._paused_result()
+            raise ValueError('Continue halted without an engine stop')
+        except TimeoutError:
+            return self._fast_failure('timeout')
+        except (ConnectionError, OSError):
+            return self._fast_failure('engine_crash' if self.process.poll() is not None
+                                      else 'debugger_disconnected')
+        except ValueError as exc:
+            return self._fast_failure('debugger_protocol_error', detail=str(exc))
 
     def _step_impl(self) -> dict:
         if self.closed:
@@ -200,6 +289,8 @@ class RunSession:
             return self._finish('debugger_protocol_error',detail=str(exc))
 
     def continue_steps(self, count: int) -> dict:
+        if self.fast:
+            raise ValueError('continue_steps requires single-step mode')
         if not 0 < count <= 1000000:
             raise ValueError('Invalid step count')
         self.paused = False
